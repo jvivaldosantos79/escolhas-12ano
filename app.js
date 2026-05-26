@@ -77,6 +77,7 @@ const authWarning = document.querySelector("#auth-warning");
 const signInButton = document.querySelector("#sign-in");
 const headerSession = document.querySelector("#header-session");
 const headerAuthEmail = document.querySelector("#header-auth-email");
+const profilePhoto = document.querySelector("#profile-photo");
 const headerSignOutButton = document.querySelector("#header-sign-out");
 const adminNav = document.querySelector("#admin-nav");
 const studentArea = document.querySelector("#student-area");
@@ -103,7 +104,7 @@ let supabaseClient = null;
 let supabaseInitPromise = null;
 
 const loginRequest = {
-  scopes: ["openid", "profile", "email"]
+  scopes: ["openid", "profile", "email", "User.Read"]
 };
 
 const studentRepository = {
@@ -395,6 +396,7 @@ async function loadSignedInStudent() {
     return;
   }
 
+  document.querySelector("#entrada").classList.remove("hidden");
   loginMessage.textContent = "A procurar os teus dados...";
   studentArea.classList.add("hidden");
 
@@ -414,6 +416,7 @@ async function loadSignedInStudent() {
     currentStudent = student;
     currentChoice = await choiceRepository.getByAlunoId(student.aluno_id);
     loginMessage.textContent = "";
+    document.querySelector("#entrada").classList.add("hidden");
     renderStudentArea(student, currentChoice);
   } catch (error) {
     showLoginError(error.message);
@@ -448,6 +451,7 @@ function renderStudentArea(student, existingChoice = null) {
   updateChoiceStatus(existingChoice);
   setChoicesLocked(existingChoice?.estado === "bloqueada");
   studentArea.classList.remove("hidden");
+  window.history.replaceState(null, "", "#opcoes");
   submitChoiceButton.disabled = true;
   updateValidation();
   studentArea.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -959,7 +963,8 @@ function updateAuthUi() {
   signInButton.disabled = false;
 
   if (isSignedIn) {
-    headerAuthEmail.textContent = `Sessão iniciada como ${getSignedInDisplayName()}`;
+    headerAuthEmail.textContent = getSignedInDisplayName();
+    loadProfilePhoto();
 
     if (isAdmin) {
       studentArea.classList.add("hidden");
@@ -970,6 +975,8 @@ function updateAuthUi() {
     }
   } else {
     headerAuthEmail.textContent = "";
+    profilePhoto.classList.add("hidden");
+    profilePhoto.removeAttribute("src");
     studentArea.classList.add("hidden");
   }
 }
@@ -1002,6 +1009,57 @@ function getSignedInDisplayName() {
     signedInAccount.idTokenClaims?.name ||
     getSignedInEmail()
   );
+}
+
+async function loadProfilePhoto() {
+  if (!msalClient || !signedInAccount) {
+    return;
+  }
+
+  try {
+    const tokenResponse = await msalClient.acquireTokenSilent({
+      ...loginRequest,
+      account: signedInAccount
+    });
+    const response = await fetch("https://graph.microsoft.com/v1.0/me/photo/$value", {
+      headers: {
+        Authorization: `Bearer ${tokenResponse.accessToken}`
+      }
+    });
+
+    if (!response.ok) {
+      showInitialsAvatar();
+      return;
+    }
+
+    const blob = await response.blob();
+    profilePhoto.src = URL.createObjectURL(blob);
+    profilePhoto.alt = `Foto de ${getSignedInDisplayName()}`;
+    profilePhoto.classList.remove("hidden");
+  } catch (error) {
+    showInitialsAvatar();
+  }
+}
+
+function showInitialsAvatar() {
+  const name = getSignedInDisplayName();
+  const initials = name
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part[0].toUpperCase())
+    .join("") || "?";
+
+  const svg = `
+    <svg xmlns="http://www.w3.org/2000/svg" width="96" height="96" viewBox="0 0 96 96">
+      <rect width="96" height="96" rx="48" fill="#2f6f73"/>
+      <text x="48" y="57" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="34" font-weight="700" fill="#ffffff">${initials}</text>
+    </svg>
+  `;
+
+  profilePhoto.src = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
+  profilePhoto.alt = `Perfil de ${name}`;
+  profilePhoto.classList.remove("hidden");
 }
 
 function studentMatchesSignedInAccount(student) {

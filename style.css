@@ -124,9 +124,17 @@ a:hover {
   justify-content: flex-end;
 }
 
+.profile-photo {
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  height: 42px;
+  object-fit: cover;
+  width: 42px;
+}
+
 .header-session span {
-  color: var(--muted);
-  font-size: 0.9rem;
+  color: var(--text);
+  font-size: 0.95rem;
   font-weight: 700;
   max-width: 280px;
   overflow-wrap: anywhere;
