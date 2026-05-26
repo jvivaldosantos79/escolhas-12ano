@@ -124,6 +124,7 @@ const submitChoiceButton = document.querySelector("#submit-choice");
 const cancelEditButton = document.querySelector("#cancel-edit");
 const confirmation = document.querySelector("#confirmation");
 const csvOutput = document.querySelector("#csv-output");
+const adminDashboard = document.querySelector("#admin-dashboard");
 const adminResults = document.querySelector("#admin-results");
 const refreshResultsButton = document.querySelector("#refresh-results");
 const exportCsvButton = document.querySelector("#export-csv");
@@ -427,7 +428,7 @@ choicesForm.addEventListener("submit", async (event) => {
   }
 });
 
-refreshResultsButton.addEventListener("click", updateAdminResults);
+refreshResultsButton.addEventListener("click", updateAdminDashboard);
 exportCsvButton.addEventListener("click", updateCsvOutput);
 
 downloadCsvButton.addEventListener("click", async () => {
@@ -447,7 +448,7 @@ clearResultsButton.addEventListener("click", async () => {
     try {
       await choiceRepository.clear();
       await updateCsvOutput();
-      await updateAdminResults();
+      await updateAdminDashboard();
     } catch (error) {
       csvOutput.value = error.message;
     }
@@ -868,6 +869,10 @@ function getCourseRules(course) {
   return courseRules[normalizeCourseKey(course)];
 }
 
+function getCourseLabel(course) {
+  return getCourseRules(course)?.label || course || "Sem curso";
+}
+
 function findOverusedRequiredSubject(priorities, courseKey) {
   const rules = getCourseRules(courseKey);
   const counts = new Map();
@@ -1190,7 +1195,7 @@ function updateAuthUi() {
     if (isAdmin) {
       studentArea.classList.add("hidden");
       updateCsvOutput();
-      updateAdminResults();
+      updateAdminDashboard();
     } else {
       loadSignedInStudent();
     }
@@ -1304,7 +1309,226 @@ async function updateCsvOutput() {
   }
 }
 
-async function updateAdminResults() {
+async function updateAdminDashboard() {
+  if (!adminDashboard) {
+    return;
+  }
+
+  adminDashboard.textContent = "A carregar indicadores...";
+
+  try {
+    const [studentsList, choices] = await Promise.all([
+      studentRepository.getAll(),
+      choiceRepository.getAll()
+    ]);
+    renderAdminDashboard(studentsList, choices);
+    await updateAdminResults(choices);
+  } catch (error) {
+    adminDashboard.textContent = error.message;
+    adminResults.textContent = error.message;
+  }
+}
+
+function renderAdminDashboard(studentsList, choices) {
+  const submittedIds = new Set(choices.map((choice) => String(choice.aluno_id)));
+  const pendingStudents = studentsList.filter((student) => !submittedIds.has(String(student.aluno_id)));
+  const lockedCount = choices.filter((choice) => choice.estado === "bloqueada").length;
+  const editableCount = choices.length - lockedCount;
+  const byCourse = buildCourseStats(studentsList, choices);
+  const subjectStats = buildSubjectStats(choices);
+  const subjectByCourse = buildSubjectStatsByCourse(choices);
+
+  adminDashboard.innerHTML = "";
+  adminDashboard.append(
+    createMetricGrid([
+      ["Alunos", studentsList.length],
+      ["Submissões", choices.length],
+      ["Por preencher", pendingStudents.length],
+      ["Editáveis", editableCount],
+      ["Bloqueadas", lockedCount]
+    ]),
+    createAdminSection("Submissões por curso", createCourseStatsTable(byCourse)),
+    createAdminSection("Alunos por preencher", createPendingStudentsTable(pendingStudents)),
+    createAdminSection("Disciplinas mais escolhidas", createSubjectStatsTable(subjectStats)),
+    createAdminSection("Disciplinas mais escolhidas por curso", createSubjectStatsByCourseTable(subjectByCourse))
+  );
+}
+
+function createMetricGrid(items) {
+  const grid = document.createElement("div");
+  grid.className = "metric-grid";
+
+  items.forEach(([label, value]) => {
+    const card = document.createElement("article");
+    card.className = "metric-card";
+    card.innerHTML = `
+      <span>${escapeHtml(label)}</span>
+      <strong>${escapeHtml(value)}</strong>
+    `;
+    grid.appendChild(card);
+  });
+
+  return grid;
+}
+
+function createAdminSection(title, content) {
+  const section = document.createElement("section");
+  section.className = "admin-section";
+
+  const heading = document.createElement("h3");
+  heading.textContent = title;
+
+  section.append(heading, content);
+  return section;
+}
+
+function buildCourseStats(studentsList, choices) {
+  const submittedByCourse = new Map();
+  const totalsByCourse = new Map();
+
+  studentsList.forEach((student) => {
+    const label = getCourseLabel(student.curso);
+    totalsByCourse.set(label, (totalsByCourse.get(label) || 0) + 1);
+  });
+
+  choices.forEach((choice) => {
+    const label = getCourseLabel(choice.curso);
+    submittedByCourse.set(label, (submittedByCourse.get(label) || 0) + 1);
+  });
+
+  return Array.from(totalsByCourse.entries())
+    .map(([course, total]) => {
+      const submitted = submittedByCourse.get(course) || 0;
+      return {
+        course,
+        total,
+        submitted,
+        pending: total - submitted
+      };
+    })
+    .sort((first, second) => first.course.localeCompare(second.course, "pt-PT"));
+}
+
+function buildSubjectStats(choices) {
+  const counts = new Map();
+
+  choices.forEach((choice) => {
+    getPrioritySubjectsForExport(choice).forEach((subject) => {
+      if (!subject) {
+        return;
+      }
+
+      counts.set(subject, (counts.get(subject) || 0) + 1);
+    });
+  });
+
+  return Array.from(counts.entries())
+    .map(([subject, count]) => ({ subject, count }))
+    .sort((first, second) => second.count - first.count || first.subject.localeCompare(second.subject, "pt-PT"));
+}
+
+function buildSubjectStatsByCourse(choices) {
+  const counts = new Map();
+
+  choices.forEach((choice) => {
+    const course = getCourseLabel(choice.curso);
+
+    getPrioritySubjectsForExport(choice).forEach((subject) => {
+      if (!subject) {
+        return;
+      }
+
+      const key = `${course}||${subject}`;
+      counts.set(key, {
+        course,
+        subject,
+        count: (counts.get(key)?.count || 0) + 1
+      });
+    });
+  });
+
+  return Array.from(counts.values())
+    .sort((first, second) =>
+      first.course.localeCompare(second.course, "pt-PT") ||
+      second.count - first.count ||
+      first.subject.localeCompare(second.subject, "pt-PT")
+    );
+}
+
+function createCourseStatsTable(rows) {
+  if (rows.length === 0) {
+    return createEmptyMessage("Sem alunos registados.");
+  }
+
+  return createTable(
+    ["Curso", "Alunos", "Preencheram", "Por preencher"],
+    rows.map((row) => [row.course, row.total, row.submitted, row.pending])
+  );
+}
+
+function createPendingStudentsTable(studentsList) {
+  if (studentsList.length === 0) {
+    return createEmptyMessage("Todos os alunos registados já preencheram.");
+  }
+
+  return createTable(
+    ["Aluno", "Turma", "Curso", "Email"],
+    studentsList
+      .sort((first, second) => first.turma.localeCompare(second.turma, "pt-PT") || first.nome.localeCompare(second.nome, "pt-PT"))
+      .map((student) => [student.nome, student.turma, getCourseLabel(student.curso), student.email || "-"])
+  );
+}
+
+function createSubjectStatsTable(rows) {
+  if (rows.length === 0) {
+    return createEmptyMessage("Ainda não existem disciplinas escolhidas.");
+  }
+
+  return createTable(
+    ["Disciplina", "Ocorrências"],
+    rows.map((row) => [row.subject, row.count])
+  );
+}
+
+function createSubjectStatsByCourseTable(rows) {
+  if (rows.length === 0) {
+    return createEmptyMessage("Ainda não existem disciplinas escolhidas por curso.");
+  }
+
+  return createTable(
+    ["Curso", "Disciplina", "Ocorrências"],
+    rows.map((row) => [row.course, row.subject, row.count])
+  );
+}
+
+function createTable(headers, rows) {
+  const wrapper = document.createElement("div");
+  wrapper.className = "admin-table-wrap";
+  const table = document.createElement("table");
+  table.className = "results-table";
+  const thead = document.createElement("thead");
+  const tbody = document.createElement("tbody");
+
+  thead.innerHTML = `<tr>${headers.map((header) => `<th>${escapeHtml(header)}</th>`).join("")}</tr>`;
+  rows.forEach((row) => {
+    const tr = document.createElement("tr");
+    tr.innerHTML = row.map((cell) => `<td>${escapeHtml(cell)}</td>`).join("");
+    tbody.appendChild(tr);
+  });
+
+  table.append(thead, tbody);
+  wrapper.appendChild(table);
+  return wrapper;
+}
+
+function createEmptyMessage(message) {
+  const paragraph = document.createElement("p");
+  paragraph.className = "form-note";
+  paragraph.textContent = message;
+  return paragraph;
+}
+
+async function updateAdminResults(preloadedChoices = null) {
   if (!adminResults) {
     return;
   }
@@ -1312,7 +1536,7 @@ async function updateAdminResults() {
   adminResults.textContent = "A carregar resultados...";
 
   try {
-    const choices = await choiceRepository.getAll();
+    const choices = preloadedChoices || await choiceRepository.getAll();
 
     if (choices.length === 0) {
       adminResults.textContent = "Ainda não existem submissões.";
@@ -1357,7 +1581,7 @@ async function updateAdminResults() {
 
         try {
           await choiceRepository.updateStatus(choice.aluno_id, isLocked ? "submetida" : "bloqueada");
-          await updateAdminResults();
+          await updateAdminDashboard();
           await updateCsvOutput();
         } catch (error) {
           adminResults.textContent = error.message;
