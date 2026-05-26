@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Escolhas de Disciplinas do 12.º Ano</title>
-    <link rel="stylesheet" href="style.css?v=20260526-supabase-db">
+    <link rel="stylesheet" href="style.css?v=20260526-auto-student-lock">
   </head>
   <body>
     <header class="topbar">
@@ -40,19 +40,10 @@
 
       <section class="panel intro requires-auth hidden" aria-labelledby="titulo-entrada" id="entrada">
         <div>
-          <h2 id="titulo-entrada">Entrada do aluno</h2>
-          <p>Introduz o número de aluno ou código de acesso para consultar as opções disponíveis para o teu curso.</p>
+          <h2 id="titulo-entrada">Validação do aluno</h2>
+          <p>A aplicação valida automaticamente os teus dados através da conta Microsoft 365.</p>
         </div>
-
-        <form id="login-form" class="login-form">
-          <label for="student-code">Número de aluno / código</label>
-          <div class="inline-form">
-            <input id="student-code" name="student-code" inputmode="numeric" autocomplete="off" placeholder="Ex.: 12345" required>
-            <button type="submit">Entrar</button>
-          </div>
-          <p class="form-note">Dados carregados a partir de <code>alunos.csv</code>. Exemplo: 12345, 12346, 12347 ou 12348.</p>
-          <p id="login-message" class="message" role="status" aria-live="polite"></p>
-        </form>
+        <p id="login-message" class="message" role="status" aria-live="polite">A procurar os teus dados...</p>
       </section>
 
       <section id="student-area" class="panel hidden" aria-labelledby="titulo-aluno">
@@ -61,7 +52,7 @@
             <p class="eyebrow">Área do aluno</p>
             <h2 id="titulo-aluno">Dados e regras aplicáveis</h2>
           </div>
-          <button id="change-student" class="secondary" type="button">Trocar aluno</button>
+          <span id="choice-status" class="status-pill">Sem submissão</span>
         </div>
 
         <dl class="student-summary">
@@ -95,32 +86,10 @@
             Escolha inválida: preenche as 3 prioridades.
           </div>
 
-          <button id="submit-choice" type="submit" disabled>Submeter escolha</button>
+          <button id="submit-choice" type="submit" disabled>Guardar escolha</button>
         </form>
 
         <div id="confirmation" class="confirmation hidden" aria-live="polite"></div>
-      </section>
-
-      <section class="panel details" aria-labelledby="titulo-config">
-        <h2 id="titulo-config">Configuração da base de dados</h2>
-        <div class="info-grid">
-          <article>
-            <h3>Versão simples com CSV</h3>
-            <p>Coloca os alunos em <code>alunos.csv</code> com as colunas <code>aluno_id,nome,turma,curso</code>. Em GitHub Pages, Netlify, Vercel ou Cloudflare Pages o ficheiro pode ser lido diretamente pelo navegador.</p>
-          </article>
-          <article>
-            <h3>Google Sheets</h3>
-            <p>Publica a folha como CSV e substitui, em <code>app.js</code>, a constante <code>DATA_SOURCE</code> pelo URL publicado. Evita dados sensíveis.</p>
-          </article>
-          <article>
-            <h3>Alternativa Supabase</h3>
-            <p>A aplicação está preparada para ler a tabela <code>alunos</code> e guardar submissões na tabela <code>escolhas</code>.</p>
-          </article>
-          <article>
-            <h3>Autenticação O365</h3>
-            <p>Regista uma aplicação SPA no Microsoft Entra, adiciona o URL do GitHub Pages como redirect URI e coloca o <code>clientId</code> em <code>MSAL_CLIENT_ID</code>, no ficheiro <code>app.js</code>.</p>
-          </article>
-        </div>
       </section>
 
       <section class="panel admin admin-only hidden" aria-labelledby="admin" id="admin">
@@ -133,20 +102,12 @@
         </div>
         <p>Área disponível apenas para o administrador autenticado. As escolhas são carregadas a partir da tabela <code>escolhas</code> no Supabase.</p>
         <div class="admin-actions">
+          <button id="refresh-results" class="secondary" type="button">Atualizar lista</button>
           <button id="export-csv" type="button">Exportar CSV</button>
           <button id="download-csv" class="secondary" type="button">Descarregar ficheiro CSV</button>
         </div>
+        <div id="admin-results" class="admin-results"></div>
         <textarea id="csv-output" readonly rows="8" aria-label="Exportação CSV">Sem resultados submetidos.</textarea>
-      </section>
-
-      <section class="panel details" aria-labelledby="titulo-publicacao">
-        <h2 id="titulo-publicacao">Publicar no GitHub Pages</h2>
-        <ol class="steps">
-          <li>Cria um repositório no GitHub e envia a pasta <code>escolhas-12ano</code>.</li>
-          <li>Nas definições do repositório, abre <strong>Pages</strong>.</li>
-          <li>Escolhe a branch principal e a pasta raiz do projeto.</li>
-          <li>Confirma que <code>index.html</code>, <code>style.css</code>, <code>app.js</code> e <code>alunos.csv</code> ficam publicados juntos.</li>
-        </ol>
       </section>
     </main>
 
@@ -154,6 +115,6 @@
       <p>Aplicação escolar demonstrativa. Recolhe apenas os dados mínimos necessários.</p>
     </footer>
 
-    <script src="app.js?v=20260526-supabase-db"></script>
+    <script src="app.js?v=20260526-auto-student-lock"></script>
   </body>
 </html>

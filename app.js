@@ -72,8 +72,6 @@ const courseRules = {
   }
 };
 
-const loginForm = document.querySelector("#login-form");
-const studentCodeInput = document.querySelector("#student-code");
 const loginMessage = document.querySelector("#login-message");
 const authWarning = document.querySelector("#auth-warning");
 const signInButton = document.querySelector("#sign-in");
@@ -82,19 +80,22 @@ const headerAuthEmail = document.querySelector("#header-auth-email");
 const headerSignOutButton = document.querySelector("#header-sign-out");
 const adminNav = document.querySelector("#admin-nav");
 const studentArea = document.querySelector("#student-area");
-const changeStudentButton = document.querySelector("#change-student");
+const choiceStatus = document.querySelector("#choice-status");
 const choicesForm = document.querySelector("#choices-form");
 const prioritiesList = document.querySelector("#priorities-list");
 const validationMessage = document.querySelector("#validation-message");
 const submitChoiceButton = document.querySelector("#submit-choice");
 const confirmation = document.querySelector("#confirmation");
 const csvOutput = document.querySelector("#csv-output");
+const adminResults = document.querySelector("#admin-results");
+const refreshResultsButton = document.querySelector("#refresh-results");
 const exportCsvButton = document.querySelector("#export-csv");
 const downloadCsvButton = document.querySelector("#download-csv");
 const clearResultsButton = document.querySelector("#clear-results");
 
 let students = [];
 let currentStudent = null;
+let currentChoice = null;
 let msalClient = null;
 let signedInAccount = null;
 let authInitPromise = null;
@@ -153,10 +154,56 @@ const studentRepository = {
     }
 
     return students.find((student) => student.aluno_id === studentId);
+  },
+
+  async findByEmail(email) {
+    const normalizedEmail = email.toLowerCase();
+    const client = await ensureSupabaseReady();
+
+    if (client) {
+      const { data, error } = await client
+        .from("alunos")
+        .select("aluno_id,nome,turma,curso,email")
+        .eq("email", normalizedEmail)
+        .maybeSingle();
+
+      if (error) {
+        throw new Error("Não foi possível validar os dados do aluno.");
+      }
+
+      return data ? normalizeStudent(data) : null;
+    }
+
+    if (students.length === 0) {
+      students = await this.getAll();
+    }
+
+    return students.find((student) => (student.email || "").toLowerCase() === normalizedEmail) || null;
   }
 };
 
 const choiceRepository = {
+  async getByAlunoId(alunoId) {
+    const client = await ensureSupabaseReady();
+
+    if (client) {
+      const { data, error } = await client
+        .from("escolhas")
+        .select("*")
+        .eq("aluno_id", String(alunoId))
+        .maybeSingle();
+
+      if (error) {
+        throw new Error("Não foi possível consultar a submissão existente.");
+      }
+
+      return data ? mapChoiceFromDatabase(data) : null;
+    }
+
+    const choices = JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]");
+    return choices.find((choice) => choice.aluno_id === String(alunoId)) || null;
+  },
+
   async getAll() {
     const client = await ensureSupabaseReady();
 
@@ -180,11 +227,17 @@ const choiceRepository = {
     const client = await ensureSupabaseReady();
 
     if (client) {
-      const { error } = await client.from("escolhas").insert(mapChoiceToDatabase(choice));
+      const existingChoice = await this.getByAlunoId(choice.aluno_id);
 
-      if (error && error.code === "23505") {
-        throw new Error("Este aluno já submeteu uma escolha. Contacta a administração para alterar a submissão.");
+      if (existingChoice?.estado === "bloqueada") {
+        throw new Error("A submissão está bloqueada pela administração e já não pode ser alterada.");
       }
+
+      const payload = mapChoiceToDatabase(choice, existingChoice);
+      const query = existingChoice
+        ? client.from("escolhas").update(payload).eq("aluno_id", String(choice.aluno_id))
+        : client.from("escolhas").insert(payload);
+      const { error } = await query;
 
       if (error) {
         throw new Error(`Não foi possível guardar a escolha: ${error.message}`);
@@ -203,6 +256,26 @@ const choiceRepository = {
     }
 
     localStorage.setItem(STORAGE_KEY, JSON.stringify(choices));
+  },
+
+  async updateStatus(alunoId, estado) {
+    const client = await ensureSupabaseReady();
+
+    if (!client) {
+      throw new Error("A alteração de estado requer ligação ao Supabase.");
+    }
+
+    const { error } = await client
+      .from("escolhas")
+      .update({
+        estado,
+        atualizado_em: new Date().toISOString()
+      })
+      .eq("aluno_id", String(alunoId));
+
+    if (error) {
+      throw new Error("Não foi possível atualizar o estado da submissão.");
+    }
   },
 
   async clear() {
@@ -249,51 +322,6 @@ headerSignOutButton.addEventListener("click", async () => {
   });
 });
 
-loginForm.addEventListener("submit", async (event) => {
-  event.preventDefault();
-
-  if (!signedInAccount) {
-    showLoginError("Tens de iniciar sessão com a conta O365 antes de entrar na área do aluno.");
-    return;
-  }
-
-  loginMessage.textContent = "A procurar aluno...";
-  confirmation.classList.add("hidden");
-
-  try {
-    const studentId = studentCodeInput.value.trim();
-    const student = await studentRepository.findById(studentId);
-
-    if (!student) {
-      showLoginError("Aluno não encontrado. Confirma o número ou código introduzido.");
-      return;
-    }
-
-    if (!courseRules[student.curso]) {
-      showLoginError("O curso associado ao aluno não está configurado nesta aplicação.");
-      return;
-    }
-
-    if (!studentMatchesSignedInAccount(student)) {
-      showLoginError("Este número de aluno não corresponde à conta O365 autenticada.");
-      return;
-    }
-
-    currentStudent = student;
-    loginMessage.textContent = "";
-    renderStudentArea(student);
-  } catch (error) {
-    showLoginError(error.message);
-  }
-});
-
-changeStudentButton.addEventListener("click", () => {
-  currentStudent = null;
-  studentArea.classList.add("hidden");
-  studentCodeInput.value = "";
-  studentCodeInput.focus();
-});
-
 choicesForm.addEventListener("change", () => {
   enforcePriorityLimits();
   updateValidation();
@@ -316,14 +344,16 @@ choicesForm.addEventListener("submit", async (event) => {
     curso: currentStudent.curso,
     autenticado_com: getSignedInEmail(),
     prioridades: priorities,
-    submetido_em: new Date().toISOString()
+    submetido_em: currentChoice?.submetido_em || new Date().toISOString()
   };
 
   try {
     submitChoiceButton.disabled = true;
     await choiceRepository.save(choice);
+    currentChoice = await choiceRepository.getByAlunoId(currentStudent.aluno_id);
     confirmation.classList.remove("hidden");
-    confirmation.textContent = "Escolha submetida com 3 prioridades diferentes e guardada na base de dados.";
+    confirmation.textContent = "Escolha guardada na base de dados.";
+    updateChoiceStatus(currentChoice);
     await updateCsvOutput();
   } catch (error) {
     validationMessage.textContent = error.message;
@@ -333,6 +363,7 @@ choicesForm.addEventListener("submit", async (event) => {
   }
 });
 
+refreshResultsButton.addEventListener("click", updateAdminResults);
 exportCsvButton.addEventListener("click", updateCsvOutput);
 
 downloadCsvButton.addEventListener("click", async () => {
@@ -352,13 +383,44 @@ clearResultsButton.addEventListener("click", async () => {
     try {
       await choiceRepository.clear();
       await updateCsvOutput();
+      await updateAdminResults();
     } catch (error) {
       csvOutput.value = error.message;
     }
   }
 });
 
-function renderStudentArea(student) {
+async function loadSignedInStudent() {
+  if (!signedInAccount || getSignedInEmail() === ADMIN_EMAIL) {
+    return;
+  }
+
+  loginMessage.textContent = "A procurar os teus dados...";
+  studentArea.classList.add("hidden");
+
+  try {
+    const student = await studentRepository.findByEmail(getSignedInEmail());
+
+    if (!student) {
+      showLoginError("Não foi encontrado um aluno associado à tua conta Microsoft 365. Contacta a secretaria ou a administração.");
+      return;
+    }
+
+    if (!courseRules[student.curso]) {
+      showLoginError("O teu curso não está configurado nesta aplicação. Contacta a administração.");
+      return;
+    }
+
+    currentStudent = student;
+    currentChoice = await choiceRepository.getByAlunoId(student.aluno_id);
+    loginMessage.textContent = "";
+    renderStudentArea(student, currentChoice);
+  } catch (error) {
+    showLoginError(error.message);
+  }
+}
+
+function renderStudentArea(student, existingChoice = null) {
   const rules = courseRules[student.curso];
 
   document.querySelector("#student-name").textContent = student.nome;
@@ -372,10 +434,69 @@ function renderStudentArea(student) {
     prioritiesList.appendChild(createPriorityGroup(priority, rules));
   }
 
+  if (existingChoice) {
+    prefillChoice(existingChoice);
+    confirmation.classList.remove("hidden");
+    confirmation.textContent = existingChoice.estado === "bloqueada"
+      ? "A tua submissão está bloqueada pela administração e já não pode ser alterada."
+      : "Já existe uma submissão guardada. Podes rever e editar enquanto não estiver bloqueada.";
+  } else {
+    confirmation.classList.add("hidden");
+    confirmation.textContent = "";
+  }
+
+  updateChoiceStatus(existingChoice);
+  setChoicesLocked(existingChoice?.estado === "bloqueada");
   studentArea.classList.remove("hidden");
   submitChoiceButton.disabled = true;
   updateValidation();
   studentArea.scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+function prefillChoice(choice) {
+  choice.prioridades.forEach((item) => {
+    item.subjects.forEach((subject) => {
+      const input = document.querySelector(`input[name="priority-${item.priority}"][value="${escapeSelectorValue(subject)}"]`);
+
+      if (input) {
+        input.checked = true;
+      }
+    });
+  });
+
+  enforcePriorityLimits();
+}
+
+function escapeSelectorValue(value) {
+  if (window.CSS?.escape) {
+    return window.CSS.escape(value);
+  }
+
+  return String(value).replaceAll('"', '\\"');
+}
+
+function updateChoiceStatus(choice) {
+  if (!choice) {
+    choiceStatus.textContent = "Sem submissão";
+    choiceStatus.className = "status-pill";
+    submitChoiceButton.textContent = "Guardar escolha";
+    return;
+  }
+
+  const isLocked = choice.estado === "bloqueada";
+  choiceStatus.textContent = isLocked ? "Submissão bloqueada" : "Submissão editável";
+  choiceStatus.className = `status-pill ${isLocked ? "locked" : "editable"}`;
+  submitChoiceButton.textContent = isLocked ? "Submissão bloqueada" : "Atualizar escolha";
+}
+
+function setChoicesLocked(isLocked) {
+  document.querySelectorAll('input[type="checkbox"][name^="priority-"]').forEach((input) => {
+    input.disabled = isLocked || input.disabled;
+  });
+
+  if (isLocked) {
+    submitChoiceButton.disabled = true;
+  }
 }
 
 function createPriorityGroup(priority, rules) {
@@ -451,6 +572,13 @@ function enforcePriorityLimits() {
 
 function updateValidation() {
   if (!currentStudent) {
+    return;
+  }
+
+  if (currentChoice?.estado === "bloqueada") {
+    validationMessage.textContent = "Submissão bloqueada pela administração.";
+    validationMessage.className = "validation invalid";
+    submitChoiceButton.disabled = true;
     return;
   }
 
@@ -657,8 +785,9 @@ function normalizeStudent(student) {
   };
 }
 
-function mapChoiceToDatabase(choice) {
+function mapChoiceToDatabase(choice, existingChoice = null) {
   const prioritySubjects = getPrioritySubjectsForExport(choice);
+  const now = new Date().toISOString();
 
   return {
     aluno_id: String(choice.aluno_id),
@@ -672,8 +801,9 @@ function mapChoiceToDatabase(choice) {
     prioridade_2_disciplina_2: prioritySubjects[3],
     prioridade_3_disciplina_1: prioritySubjects[4],
     prioridade_3_disciplina_2: prioritySubjects[5],
-    submetido_em: choice.submetido_em,
-    estado: "submetida"
+    submetido_em: existingChoice?.submetido_em || choice.submetido_em,
+    atualizado_em: existingChoice ? now : null,
+    estado: existingChoice?.estado || "submetida"
   };
 }
 
@@ -698,7 +828,9 @@ function mapChoiceFromDatabase(row) {
         subjects: [row.prioridade_3_disciplina_1, row.prioridade_3_disciplina_2]
       }
     ],
-    submetido_em: row.submetido_em
+    submetido_em: row.submetido_em,
+    atualizado_em: row.atualizado_em,
+    estado: row.estado || "submetida"
   };
 }
 
@@ -815,7 +947,7 @@ function updateAuthUi() {
 
   document.querySelector("#autenticacao").classList.toggle("hidden", isSignedIn);
   document.querySelectorAll(".requires-auth").forEach((element) => {
-    element.classList.toggle("hidden", !isSignedIn);
+    element.classList.toggle("hidden", !isSignedIn || isAdmin);
   });
 
   document.querySelectorAll(".admin-only").forEach((element) => {
@@ -830,7 +962,11 @@ function updateAuthUi() {
     headerAuthEmail.textContent = `Sessão iniciada como ${getSignedInDisplayName()}`;
 
     if (isAdmin) {
+      studentArea.classList.add("hidden");
       updateCsvOutput();
+      updateAdminResults();
+    } else {
+      loadSignedInStudent();
     }
   } else {
     headerAuthEmail.textContent = "";
@@ -878,10 +1014,82 @@ function studentMatchesSignedInAccount(student) {
 
 async function updateCsvOutput() {
   try {
-    const csv = buildChoicesCsv(await choiceRepository.getAll());
+    const choices = await choiceRepository.getAll();
+    const csv = buildChoicesCsv(choices);
     csvOutput.value = csv || "Sem resultados submetidos.";
   } catch (error) {
     csvOutput.value = error.message;
+  }
+}
+
+async function updateAdminResults() {
+  if (!adminResults) {
+    return;
+  }
+
+  adminResults.textContent = "A carregar resultados...";
+
+  try {
+    const choices = await choiceRepository.getAll();
+
+    if (choices.length === 0) {
+      adminResults.textContent = "Ainda não existem submissões.";
+      return;
+    }
+
+    const table = document.createElement("table");
+    table.className = "results-table";
+    table.innerHTML = `
+      <thead>
+        <tr>
+          <th>Aluno</th>
+          <th>Turma</th>
+          <th>Curso</th>
+          <th>Estado</th>
+          <th>Ações</th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+    `;
+
+    const tbody = table.querySelector("tbody");
+
+    choices.forEach((choice) => {
+      const row = document.createElement("tr");
+      const isLocked = choice.estado === "bloqueada";
+      row.innerHTML = `
+        <td>${escapeHtml(choice.nome)}<br><small>${escapeHtml(choice.aluno_id)}</small></td>
+        <td>${escapeHtml(choice.turma)}</td>
+        <td>${escapeHtml(choice.curso)}</td>
+        <td><span class="status-pill ${isLocked ? "locked" : "editable"}">${isLocked ? "Bloqueada" : "Editável"}</span></td>
+        <td></td>
+      `;
+
+      const actionCell = row.querySelector("td:last-child");
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = isLocked ? "secondary" : "secondary danger";
+      button.textContent = isLocked ? "Desbloquear" : "Bloquear";
+      button.addEventListener("click", async () => {
+        button.disabled = true;
+
+        try {
+          await choiceRepository.updateStatus(choice.aluno_id, isLocked ? "submetida" : "bloqueada");
+          await updateAdminResults();
+          await updateCsvOutput();
+        } catch (error) {
+          adminResults.textContent = error.message;
+        }
+      });
+
+      actionCell.appendChild(button);
+      tbody.appendChild(row);
+    });
+
+    adminResults.innerHTML = "";
+    adminResults.appendChild(table);
+  } catch (error) {
+    adminResults.textContent = error.message;
   }
 }
 
@@ -903,7 +1111,8 @@ function buildChoicesCsv(choices) {
       "prioridade_2_disciplina_2",
       "prioridade_3_disciplina_1",
       "prioridade_3_disciplina_2",
-      "submetido_em"
+      "submetido_em",
+      "estado"
     ],
     ...choices.map((choice) => {
       const prioritySubjects = getPrioritySubjectsForExport(choice);
@@ -915,7 +1124,8 @@ function buildChoicesCsv(choices) {
         choice.curso,
         choice.autenticado_com || "",
         ...prioritySubjects,
-        choice.submetido_em
+        choice.submetido_em,
+        choice.estado || "submetida"
       ];
     })
   ];
@@ -945,6 +1155,15 @@ function escapeCsvValue(value) {
   }
 
   return text;
+}
+
+function escapeHtml(value) {
+  return String(value || "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
 }
 
 authInitPromise = initAuth();

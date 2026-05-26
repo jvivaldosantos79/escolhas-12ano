@@ -284,6 +284,30 @@ textarea {
   padding: 1rem;
 }
 
+.status-pill {
+  align-self: flex-start;
+  background: #edf1f4;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--muted);
+  display: inline-flex;
+  font-size: 0.85rem;
+  font-weight: 800;
+  padding: 0.4rem 0.7rem;
+}
+
+.status-pill.editable {
+  background: var(--valid-bg);
+  border-color: #9ccfb2;
+  color: var(--valid);
+}
+
+.status-pill.locked {
+  background: var(--invalid-bg);
+  border-color: #e1aaa5;
+  color: var(--invalid);
+}
+
 dt {
   color: var(--muted);
   font-size: 0.78rem;
@@ -402,6 +426,36 @@ dd {
   display: flex;
   flex-wrap: wrap;
   gap: 0.75rem;
+}
+
+.admin-results {
+  margin-top: 1rem;
+  overflow-x: auto;
+}
+
+.results-table {
+  border-collapse: collapse;
+  min-width: 760px;
+  width: 100%;
+}
+
+.results-table th,
+.results-table td {
+  border-bottom: 1px solid var(--border);
+  padding: 0.75rem;
+  text-align: left;
+  vertical-align: middle;
+}
+
+.results-table th {
+  color: var(--muted);
+  font-size: 0.78rem;
+  text-transform: uppercase;
+}
+
+.results-table small {
+  color: var(--muted);
+  font-weight: 700;
 }
 
 .steps {
