@@ -536,11 +536,33 @@ function setChoicesLocked(isLocked) {
 function showHome() {
   studentArea.classList.add("hidden");
   summaryArea.classList.add("hidden");
+  document.querySelector("#entrada").classList.add("hidden");
 
-  if (signedInAccount && getSignedInEmail() !== ADMIN_EMAIL) {
-    document.querySelector("#entrada").classList.remove("hidden");
+  if (!signedInAccount) {
+    document.querySelector("#autenticacao").classList.remove("hidden");
+    window.history.replaceState(null, "", HOME_URL);
+    window.scrollTo({ top: 0, behavior: "smooth" });
+    return;
   }
 
+  if (getSignedInEmail() === ADMIN_EMAIL) {
+    document.querySelector("#admin").classList.remove("hidden");
+    window.history.replaceState(null, "", "#admin");
+    document.querySelector("#admin").scrollIntoView({ behavior: "smooth", block: "start" });
+    return;
+  }
+
+  if (currentChoice) {
+    showSummaryPage(currentChoice);
+    return;
+  }
+
+  if (currentStudent) {
+    showChoiceEditor();
+    return;
+  }
+
+  document.querySelector("#entrada").classList.remove("hidden");
   window.history.replaceState(null, "", HOME_URL);
   window.scrollTo({ top: 0, behavior: "smooth" });
 }
