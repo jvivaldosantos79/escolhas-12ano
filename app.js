@@ -130,6 +130,13 @@ const refreshResultsButton = document.querySelector("#refresh-results");
 const exportCsvButton = document.querySelector("#export-csv");
 const downloadCsvButton = document.querySelector("#download-csv");
 const clearResultsButton = document.querySelector("#clear-results");
+const adminFiltersForm = document.querySelector("#admin-filters");
+const filterCourse = document.querySelector("#filter-course");
+const filterClass = document.querySelector("#filter-class");
+const filterStatus = document.querySelector("#filter-status");
+const filterSubmission = document.querySelector("#filter-submission");
+const filterSearch = document.querySelector("#filter-search");
+const clearFiltersButton = document.querySelector("#clear-filters");
 
 let students = [];
 let currentStudent = null;
@@ -139,6 +146,8 @@ let signedInAccount = null;
 let authInitPromise = null;
 let supabaseClient = null;
 let supabaseInitPromise = null;
+let adminStudentsCache = [];
+let adminChoicesCache = [];
 
 const loginRequest = {
   scopes: ["openid", "profile", "email", "User.Read"]
@@ -431,8 +440,26 @@ choicesForm.addEventListener("submit", async (event) => {
 refreshResultsButton.addEventListener("click", updateAdminDashboard);
 exportCsvButton.addEventListener("click", updateCsvOutput);
 
+adminFiltersForm.addEventListener("input", () => {
+  renderFilteredAdminDashboard();
+});
+
+adminFiltersForm.addEventListener("change", () => {
+  renderFilteredAdminDashboard();
+});
+
+clearFiltersButton.addEventListener("click", () => {
+  filterCourse.value = "";
+  filterClass.value = "";
+  filterStatus.value = "";
+  filterSubmission.value = "";
+  filterSearch.value = "";
+  renderFilteredAdminDashboard();
+});
+
 downloadCsvButton.addEventListener("click", async () => {
-  const csv = buildChoicesCsv(await choiceRepository.getAll());
+  const { choices } = getFilteredAdminData();
+  const csv = buildChoicesCsv(choices);
   const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
   const link = document.createElement("a");
   link.href = URL.createObjectURL(blob);
@@ -1301,7 +1328,7 @@ function studentMatchesSignedInAccount(student) {
 
 async function updateCsvOutput() {
   try {
-    const choices = await choiceRepository.getAll();
+    const choices = adminChoicesCache.length ? getFilteredAdminData().choices : await choiceRepository.getAll();
     const csv = buildChoicesCsv(choices);
     csvOutput.value = csv || "Sem resultados submetidos.";
   } catch (error) {
@@ -1321,8 +1348,10 @@ async function updateAdminDashboard() {
       studentRepository.getAll(),
       choiceRepository.getAll()
     ]);
-    renderAdminDashboard(studentsList, choices);
-    await updateAdminResults(choices);
+    adminStudentsCache = studentsList;
+    adminChoicesCache = choices;
+    updateAdminFilterOptions(studentsList);
+    renderFilteredAdminDashboard();
   } catch (error) {
     adminDashboard.textContent = error.message;
     adminResults.textContent = error.message;
@@ -1352,6 +1381,107 @@ function renderAdminDashboard(studentsList, choices) {
     createAdminSection("Disciplinas mais escolhidas", createSubjectStatsTable(subjectStats)),
     createAdminSection("Disciplinas mais escolhidas por curso", createSubjectStatsByCourseTable(subjectByCourse))
   );
+}
+
+function renderFilteredAdminDashboard() {
+  const filtered = getFilteredAdminData();
+  renderAdminDashboard(filtered.students, filtered.choices);
+  updateAdminResults(filtered.choices);
+  csvOutput.value = buildChoicesCsv(filtered.choices) || "Sem resultados submetidos.";
+}
+
+function getFilteredAdminData() {
+  const filters = getAdminFilters();
+  const choicesByAluno = new Map(adminChoicesCache.map((choice) => [String(choice.aluno_id), choice]));
+
+  const students = adminStudentsCache.filter((student) => studentMatchesAdminFilters(student, choicesByAluno.get(String(student.aluno_id)), filters));
+  const visibleStudentIds = new Set(students.map((student) => String(student.aluno_id)));
+  const choices = adminChoicesCache.filter((choice) => visibleStudentIds.has(String(choice.aluno_id)));
+
+  return { students, choices };
+}
+
+function getAdminFilters() {
+  return {
+    course: filterCourse.value,
+    className: filterClass.value,
+    status: filterStatus.value,
+    submission: filterSubmission.value,
+    search: filterSearch.value.trim().toLowerCase()
+  };
+}
+
+function studentMatchesAdminFilters(student, choice, filters) {
+  const submitted = Boolean(choice);
+
+  if (filters.course && getCourseLabel(student.curso) !== filters.course) {
+    return false;
+  }
+
+  if (filters.className && student.turma !== filters.className) {
+    return false;
+  }
+
+  if (filters.status && (!choice || choice.estado !== filters.status)) {
+    return false;
+  }
+
+  if (filters.submission === "submitted" && !submitted) {
+    return false;
+  }
+
+  if (filters.submission === "pending" && submitted) {
+    return false;
+  }
+
+  if (filters.search) {
+    const haystack = [
+      student.aluno_id,
+      student.nome,
+      student.turma,
+      student.curso,
+      student.email,
+      choice?.email_autenticado,
+      choice?.autenticado_com
+    ]
+      .filter(Boolean)
+      .join(" ")
+      .toLowerCase();
+
+    return haystack.includes(filters.search);
+  }
+
+  return true;
+}
+
+function updateAdminFilterOptions(studentsList) {
+  const currentCourse = filterCourse.value;
+  const currentClass = filterClass.value;
+  fillSelectOptions(filterCourse, uniqueSorted(studentsList.map((student) => getCourseLabel(student.curso))));
+  fillSelectOptions(filterClass, uniqueSorted(studentsList.map((student) => student.turma)));
+  filterCourse.value = Array.from(filterCourse.options).some((option) => option.value === currentCourse) ? currentCourse : "";
+  filterClass.value = Array.from(filterClass.options).some((option) => option.value === currentClass) ? currentClass : "";
+}
+
+function fillSelectOptions(select, values) {
+  const firstOption = select.querySelector("option");
+  select.innerHTML = "";
+  select.appendChild(firstOption);
+
+  values.forEach((value) => {
+    if (!value) {
+      return;
+    }
+
+    const option = document.createElement("option");
+    option.value = value;
+    option.textContent = value;
+    select.appendChild(option);
+  });
+}
+
+function uniqueSorted(values) {
+  return Array.from(new Set(values.filter(Boolean))).sort((first, second) => first.localeCompare(second, "pt-PT"));
 }
 
 function createMetricGrid(items) {

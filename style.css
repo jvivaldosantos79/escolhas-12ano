@@ -206,7 +206,8 @@ fieldset {
 }
 
 input,
-textarea {
+textarea,
+select {
   border: 1px solid var(--border);
   border-radius: 6px;
   color: var(--text);
@@ -226,6 +227,10 @@ textarea {
   margin-top: 1rem;
   min-height: 180px;
   resize: vertical;
+}
+
+select {
+  background: #ffffff;
 }
 
 .inline-form {
@@ -436,6 +441,23 @@ dd {
   gap: 0.75rem;
 }
 
+.admin-filters {
+  align-items: end;
+  display: grid;
+  gap: 0.75rem;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  margin: 1rem 0;
+}
+
+.admin-filters label {
+  margin: 0;
+}
+
+.admin-filters select,
+.admin-filters input {
+  margin-top: 0.35rem;
+}
+
 .form-actions {
   display: flex;
   flex-wrap: wrap;
@@ -573,7 +595,8 @@ code {
   .student-summary,
   .subjects-list,
   .info-grid,
-  .metric-grid {
+  .metric-grid,
+  .admin-filters {
     grid-template-columns: 1fr;
   }
 }
