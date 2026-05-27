@@ -897,7 +897,7 @@ function updateCambridgeUi() {
 
   cambridgeExtraNote.textContent = "Seleciona uma disciplina adicional.";
   extraSubjects.forEach((subject) => {
-    cambridgeExtraList.appendChild(createCambridgeExtraOption(subject, rules));
+    cambridgeExtraList.appendChild(createCambridgeExtraOption(subject, rules, selection.disciplina_extra));
   });
   cambridgeExtraOptions.classList.remove("hidden");
 }
@@ -922,7 +922,7 @@ function getCambridgeExtraSubjects(rules, selection) {
   return [];
 }
 
-function createCambridgeExtraOption(subject, rules) {
+function createCambridgeExtraOption(subject, rules, selectedSubject = "") {
   const label = document.createElement("label");
   label.className = "subject-option required-subject";
 
@@ -930,6 +930,7 @@ function createCambridgeExtraOption(subject, rules) {
   input.type = "radio";
   input.name = "cambridge-extra";
   input.value = subject;
+  input.checked = subject === selectedSubject;
 
   const text = document.createElement("span");
   text.textContent = subject;
@@ -938,10 +939,6 @@ function createCambridgeExtraOption(subject, rules) {
   group.textContent = `${rules.requiredGroupName} - opção d)`;
   text.appendChild(group);
   label.append(input, text);
-  label.addEventListener("click", () => {
-    input.checked = true;
-    updateValidation();
-  });
   return label;
 }
 
