@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Escolhas de Disciplinas do 12.º Ano</title>
-    <link rel="stylesheet" href="style.css?v=20260527-faq">
+    <link rel="stylesheet" href="style.css?v=20260529-artes-stats">
   </head>
   <body>
     <header class="topbar">
@@ -280,7 +280,10 @@
             <p class="eyebrow">Administração</p>
             <h2>Painel de resultados</h2>
           </div>
-          <button id="open-admin-tools" class="secondary" type="button">Exportação e manutenção</button>
+          <div class="admin-actions">
+            <button id="open-admin-stats" class="secondary" type="button">Ver estatísticas</button>
+            <button id="open-admin-tools" class="secondary" type="button">Exportação e manutenção</button>
+          </div>
         </div>
         <p>Área disponível apenas para administradores autenticados.</p>
         <form id="admin-filters" class="admin-filters">
@@ -329,6 +332,18 @@
         <div id="admin-results" class="admin-results"></div>
       </section>
 
+      <section class="panel admin admin-only hidden" aria-labelledby="admin-stats-title" id="admin-stats">
+        <div class="section-head">
+          <div>
+            <p class="eyebrow">Administração</p>
+            <h2 id="admin-stats-title">Estatísticas</h2>
+          </div>
+          <button id="back-admin-from-stats" class="secondary" type="button">Voltar à administração</button>
+        </div>
+        <p>Consulta os indicadores detalhados de acordo com os filtros aplicados no painel de resultados.</p>
+        <div id="admin-stats-dashboard" class="admin-dashboard"></div>
+      </section>
+
       <section class="panel admin admin-only hidden" aria-labelledby="admin-tools-title" id="admin-tools">
         <div class="section-head">
           <div>
@@ -351,6 +366,6 @@
       <p>Aplicação escolar demonstrativa. Recolhe apenas os dados mínimos necessários.</p>
     </footer>
 
-    <script src="app.js?v=20260527-faq"></script>
+    <script src="app.js?v=20260529-artes-stats"></script>
   </body>
 </html>

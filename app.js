@@ -81,11 +81,18 @@ const courseRules = {
   },
   ArtesVisuais: {
     label: "Artes Visuais",
-    requiredGroupName: "disciplinas obrigatórias",
+    requiredGroupName: "opções específicas d",
     required: ["Oficina de Artes", "Oficina de Multimédia B"],
-    optional: [],
-    exactSubjects: ["Oficina de Artes", "Oficina de Multimédia B"],
-    ruleText: "As únicas disciplinas possíveis são Oficina de Artes e Oficina de Multimédia B. Como só existe um par válido, não é possível criar 3 prioridades diferentes sem uma regra administrativa especial."
+    optional: [
+      "Aplicações Informáticas B",
+      "Direito",
+      "Economia C",
+      "Filosofia A",
+      "Geografia C",
+      "Inglês - Língua Estrangeira I, II ou III",
+      "Psicologia B"
+    ],
+    ruleText: "Deves indicar 3 prioridades. Em cada prioridade, escolhe duas disciplinas anuais; pelo menos uma tem de ser Oficina de Artes ou Oficina de Multimédia B. Se escolheres apenas uma opção d), podes completar com uma opção e)."
   }
 };
 
@@ -136,12 +143,15 @@ const cancelEditButton = document.querySelector("#cancel-edit");
 const confirmation = document.querySelector("#confirmation");
 const csvOutput = document.querySelector("#csv-output");
 const adminDashboard = document.querySelector("#admin-dashboard");
+const adminStatsDashboard = document.querySelector("#admin-stats-dashboard");
 const adminResults = document.querySelector("#admin-results");
 const refreshResultsButton = document.querySelector("#refresh-results");
 const exportCsvButton = document.querySelector("#export-csv");
 const downloadCsvButton = document.querySelector("#download-csv");
 const clearResultsButton = document.querySelector("#clear-results");
+const openAdminStatsButton = document.querySelector("#open-admin-stats");
 const openAdminToolsButton = document.querySelector("#open-admin-tools");
+const backAdminFromStatsButton = document.querySelector("#back-admin-from-stats");
 const backAdminButton = document.querySelector("#back-admin");
 const adminFiltersForm = document.querySelector("#admin-filters");
 const filterCourse = document.querySelector("#filter-course");
@@ -501,12 +511,28 @@ clearFiltersButton.addEventListener("click", () => {
   renderFilteredAdminDashboard();
 });
 
+openAdminStatsButton.addEventListener("click", () => {
+  if (!isAdminUser) {
+    return;
+  }
+
+  showAdminStats();
+});
+
 openAdminToolsButton.addEventListener("click", () => {
   if (!isAdminUser) {
     return;
   }
 
   showAdminTools();
+});
+
+backAdminFromStatsButton.addEventListener("click", () => {
+  if (!isAdminUser) {
+    return;
+  }
+
+  showAdminHome();
 });
 
 backAdminButton.addEventListener("click", () => {
@@ -758,14 +784,25 @@ function showChoiceEditor() {
 }
 
 function showAdminHome() {
+  document.querySelector("#admin-stats").classList.add("hidden");
   document.querySelector("#admin-tools").classList.add("hidden");
   document.querySelector("#admin").classList.remove("hidden");
   window.history.replaceState(null, "", "#admin");
   document.querySelector("#admin").scrollIntoView({ behavior: "smooth", block: "start" });
 }
 
+function showAdminStats() {
+  document.querySelector("#admin").classList.add("hidden");
+  document.querySelector("#admin-tools").classList.add("hidden");
+  document.querySelector("#admin-stats").classList.remove("hidden");
+  renderFilteredAdminDashboard();
+  window.history.replaceState(null, "", "#admin-stats");
+  document.querySelector("#admin-stats").scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
 function showAdminTools() {
   document.querySelector("#admin").classList.add("hidden");
+  document.querySelector("#admin-stats").classList.add("hidden");
   document.querySelector("#admin-tools").classList.remove("hidden");
   updateCsvOutput();
   window.history.replaceState(null, "", "#admin-tools");
@@ -1290,14 +1327,6 @@ function validateSelection(selectedSubjects, courseKey) {
     };
   }
 
-  if (normalizedCourseKey === "ArtesVisuais") {
-    const hasOnlyExactSubjects = rules.exactSubjects.every((subject) => selectedSubjects.includes(subject));
-
-    return hasOnlyExactSubjects
-      ? { valid: true }
-      : { valid: false, detail: "em Artes Visuais tens de escolher Oficina de Artes e Oficina de Multimédia B." };
-  }
-
   const hasRequiredSubject = selectedSubjects.some((subject) => rules.required.includes(subject));
 
   if (!hasRequiredSubject) {
@@ -1770,19 +1799,32 @@ function renderAdminDashboard(studentsList, choices) {
   const pendingStudents = studentsList.filter((student) => !submittedIds.has(String(student.aluno_id)));
   const lockedCount = choices.filter((choice) => choice.estado === "bloqueada").length;
   const editableCount = choices.length - lockedCount;
-  const byCourse = buildCourseStats(studentsList, choices);
-  const subjectStats = buildSubjectStats(choices);
-  const subjectByCourse = buildSubjectStatsByCourse(choices);
 
   adminDashboard.innerHTML = "";
-  adminDashboard.append(
+  adminDashboard.appendChild(
     createMetricGrid([
       ["Alunos", studentsList.length],
       ["Submissões", choices.length],
       ["Por preencher", pendingStudents.length],
       ["Editáveis", editableCount],
       ["Bloqueadas", lockedCount]
-    ]),
+    ])
+  );
+}
+
+function renderAdminStats(studentsList, choices) {
+  if (!adminStatsDashboard) {
+    return;
+  }
+
+  const submittedIds = new Set(choices.map((choice) => String(choice.aluno_id)));
+  const pendingStudents = studentsList.filter((student) => !submittedIds.has(String(student.aluno_id)));
+  const byCourse = buildCourseStats(studentsList, choices);
+  const subjectStats = buildSubjectStats(choices);
+  const subjectByCourse = buildSubjectStatsByCourse(choices);
+
+  adminStatsDashboard.innerHTML = "";
+  adminStatsDashboard.append(
     createAdminSection("Submissões por curso", createCourseStatsTable(byCourse)),
     createAdminSection("Alunos por preencher", createPendingStudentsTable(pendingStudents)),
     createAdminSection("Disciplinas mais escolhidas", createSubjectStatsTable(subjectStats)),
@@ -1793,6 +1835,7 @@ function renderAdminDashboard(studentsList, choices) {
 function renderFilteredAdminDashboard() {
   const filtered = getFilteredAdminData();
   renderAdminDashboard(filtered.students, filtered.choices);
+  renderAdminStats(filtered.students, filtered.choices);
   updateAdminResults(filtered.choices);
   csvOutput.value = buildChoicesCsv(filtered.choices) || "Sem resultados submetidos.";
 }
