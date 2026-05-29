@@ -2435,24 +2435,92 @@ async function updateAdminResults(preloadedStudents = null, preloadedChoices = n
 
     const table = document.createElement("table");
     table.className = "results-table";
-    table.innerHTML = `
-      <thead>
-        <tr>
-          <th>Selecionar</th>
-          <th>Aluno</th>
-          <th>Turma</th>
-          <th>Curso</th>
-          <th>Situação</th>
-          <th>Estado</th>
-          <th>Ações</th>
-        </tr>
-      </thead>
-      <tbody></tbody>
-    `;
+    const thead = document.createElement("thead");
+    const tbody = document.createElement("tbody");
+    let sortedRows = [...rows];
+    let resultSortKey = null;
+    let resultSortDirection = "asc";
+    const resultHeaders = [
+      ["Selecionar", null],
+      ["Aluno", "student"],
+      ["Turma", "className"],
+      ["Curso", "course"],
+      ["Situação", "submission"],
+      ["Estado", "status"],
+      ["Ações", null]
+    ];
+    const headerRow = document.createElement("tr");
 
-    const tbody = table.querySelector("tbody");
+    resultHeaders.forEach(([label, key]) => {
+      const th = document.createElement("th");
 
-    rows.forEach(({ student, choice }) => {
+      if (!key) {
+        th.textContent = label;
+        headerRow.appendChild(th);
+        return;
+      }
+
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "table-sort";
+      button.textContent = label;
+      button.setAttribute("aria-label", `Ordenar por ${label}`);
+      button.addEventListener("click", () => {
+        if (resultSortKey === key) {
+          resultSortDirection = resultSortDirection === "asc" ? "desc" : "asc";
+        } else {
+          resultSortKey = key;
+          resultSortDirection = "asc";
+        }
+
+        renderAdminResultRows();
+      });
+      th.appendChild(button);
+      headerRow.appendChild(th);
+    });
+
+    thead.appendChild(headerRow);
+    table.append(thead, tbody);
+
+    function getAdminResultSortValue(row, key) {
+      if (key === "student") {
+        return `${row.student.nome} ${row.student.aluno_id}`;
+      }
+
+      if (key === "className") {
+        return row.student.turma;
+      }
+
+      if (key === "course") {
+        return getCourseLabel(row.choice?.curso || row.student.curso);
+      }
+
+      if (key === "submission") {
+        return row.choice ? "Preencheu" : "Por preencher";
+      }
+
+      if (key === "status") {
+        return row.choice ? (row.choice.estado === "bloqueada" ? "Bloqueada" : "Editável") : "";
+      }
+
+      return "";
+    }
+
+    function renderAdminResultRows() {
+      sortedRows = [...rows];
+
+      if (resultSortKey) {
+        sortedRows.sort((first, second) =>
+          compareTableValues(
+            getAdminResultSortValue(first, resultSortKey),
+            getAdminResultSortValue(second, resultSortKey),
+            resultSortDirection
+          )
+        );
+      }
+
+      tbody.innerHTML = "";
+      sortedRows.forEach(({ student, choice }) => {
       const row = document.createElement("tr");
       const submitted = Boolean(choice);
       const isLocked = choice?.estado === "bloqueada";
@@ -2502,6 +2570,9 @@ async function updateAdminResults(preloadedStudents = null, preloadedChoices = n
       actionCell.appendChild(button);
       tbody.appendChild(row);
     });
+    }
+
+    renderAdminResultRows();
 
     const submittedCheckboxes = () => Array.from(table.querySelectorAll(".admin-result-checkbox"));
     const selectedAlunoIds = () => submittedCheckboxes().filter((checkbox) => checkbox.checked).map((checkbox) => checkbox.value);
