@@ -396,6 +396,28 @@ dd {
   margin-bottom: 1rem;
 }
 
+#tenth-automatic-subjects {
+  margin: 1rem 0;
+}
+
+#tenth-automatic-subjects ul {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  list-style: none;
+  margin: 0.75rem 0 0;
+  padding: 0;
+}
+
+#tenth-automatic-subjects li {
+  background: #ffffff;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--primary-dark);
+  font-weight: 800;
+  padding: 0.35rem 0.7rem;
+}
+
 .faq-list {
   display: grid;
   gap: 1rem;

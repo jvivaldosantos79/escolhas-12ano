@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Escolhas de Disciplinas do 12.º Ano</title>
-    <link rel="stylesheet" href="style.css?v=20260602-nao-renova-feedback">
+    <link rel="stylesheet" href="style.css?v=20260602-processo-10">
   </head>
   <body>
     <header class="topbar">
@@ -12,7 +12,7 @@
         <img src="logo.png" alt="Logotipo do Colégio Guadalupe">
         <div>
           <p class="eyebrow">Colégio Guadalupe</p>
-          <h1>Escolhas de disciplinas do 12.º ano</h1>
+          <h1 id="page-title">Escolhas de disciplinas do 12.º ano</h1>
         </div>
       </div>
       <nav aria-label="Navegação principal">
@@ -137,6 +137,24 @@
               <div id="cambridge-auto-message" class="confirmation hidden">
                 Ficas automaticamente inscrito em Psychology e Economics.
               </div>
+            </div>
+          </fieldset>
+
+          <fieldset id="tenth-choices" class="hidden">
+            <legend>Escolha de curso</legend>
+            <p class="form-note">Escolhe o curso que pretendes frequentar no 10.º ano. As disciplinas associadas aparecem automaticamente.</p>
+
+            <div id="tenth-course-options" class="subjects-list compact-subjects"></div>
+
+            <div id="tenth-automatic-subjects" class="rules-box hidden"></div>
+
+            <div id="tenth-option-subjects" class="hidden">
+              <p class="form-note">Seleciona uma disciplina de opção.</p>
+              <div id="tenth-option-list" class="subjects-list compact-subjects"></div>
+            </div>
+
+            <div id="tenth-cambridge-notice" class="message warning hidden">
+              O percurso Cambridge pode ficar sujeito a entrevista/verificação pelo Colégio.
             </div>
           </fieldset>
 
@@ -365,6 +383,6 @@
       <p>Aplicação escolar demonstrativa. Recolhe apenas os dados mínimos necessários.</p>
     </footer>
 
-    <script src="app.js?v=20260602-refresh-statuses"></script>
+    <script src="app.js?v=20260602-processo-10"></script>
   </body>
 </html>

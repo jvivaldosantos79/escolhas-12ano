@@ -1,5 +1,4 @@
 const DATA_SOURCE = "alunos.csv";
-const STORAGE_KEY = "escolhas12ano.resultados";
 const CURRENT_PROCESS_ID = "12_opcionais";
 const processesConfig = {
   "12_opcionais": {
@@ -19,6 +18,7 @@ const processesConfig = {
 };
 const CURRENT_PROCESS = processesConfig[CURRENT_PROCESS_ID] || processesConfig["12_opcionais"];
 const CURRENT_PROCESS_YEAR = CURRENT_PROCESS.year;
+const STORAGE_KEY = CURRENT_PROCESS.storageKey;
 const SUPABASE_URL = "https://rygyxkcgvimvommdnuiw.supabase.co";
 const SUPABASE_ANON_KEY = "sb_publishable_RVB9XvY8C7qLzbxvGc7E-A_ch_FCYH6";
 const SUPABASE_MODULE_URLS = [
@@ -174,6 +174,7 @@ const tenthGradeCourses = {
 };
 
 const loginMessage = document.querySelector("#login-message");
+const pageTitle = document.querySelector("#page-title");
 const authWarning = document.querySelector("#auth-warning");
 const signInButton = document.querySelector("#sign-in");
 const headerSession = document.querySelector("#header-session");
@@ -195,7 +196,13 @@ const choiceStatus = document.querySelector("#choice-status");
 const choicesForm = document.querySelector("#choices-form");
 const standardChoices = document.querySelector("#standard-choices");
 const cambridgeChoices = document.querySelector("#cambridge-choices");
+const tenthChoices = document.querySelector("#tenth-choices");
 const prioritiesList = document.querySelector("#priorities-list");
+const tenthCourseOptions = document.querySelector("#tenth-course-options");
+const tenthAutomaticSubjects = document.querySelector("#tenth-automatic-subjects");
+const tenthOptionSubjects = document.querySelector("#tenth-option-subjects");
+const tenthOptionList = document.querySelector("#tenth-option-list");
+const tenthCambridgeNotice = document.querySelector("#tenth-cambridge-notice");
 const cambridgeMainOptions = document.querySelector("#cambridge-main-options");
 const cambridgeExtraOptions = document.querySelector("#cambridge-extra-options");
 const cambridgeExtraNote = document.querySelector("#cambridge-extra-note");
@@ -378,7 +385,7 @@ const choiceRepository = {
 
       const payload = mapChoiceToDatabase(choice, existingChoice);
       const query = existingChoice
-        ? client.from("escolhas").update(payload).eq("aluno_id", String(choice.aluno_id))
+        ? client.from("escolhas").update(payload).eq("aluno_id", String(choice.aluno_id)).eq("processo_id", CURRENT_PROCESS_ID)
         : client.from("escolhas").insert(payload);
       const { error } = await query;
 
@@ -414,7 +421,8 @@ const choiceRepository = {
         estado,
         atualizado_em: new Date().toISOString()
       })
-      .eq("aluno_id", String(alunoId));
+      .eq("aluno_id", String(alunoId))
+      .eq("processo_id", CURRENT_PROCESS_ID);
 
     if (error) {
       throw new Error("Não foi possível atualizar o estado da submissão.");
@@ -425,7 +433,7 @@ const choiceRepository = {
     const client = await ensureSupabaseReady();
 
     if (client) {
-      const { error } = await client.from("escolhas").delete().neq("aluno_id", "__nunca__");
+      const { error } = await client.from("escolhas").delete().eq("processo_id", CURRENT_PROCESS_ID);
 
       if (error) {
         throw new Error("Não foi possível limpar as escolhas na base de dados.");
@@ -579,7 +587,9 @@ faqBackButton.addEventListener("click", () => {
 });
 
 choicesForm.addEventListener("change", () => {
-  if (isCurrentCourseCambridge()) {
+  if (isTenthGradeProcess()) {
+    updateTenthGradeUi();
+  } else if (isCurrentCourseCambridge()) {
     updateCambridgeUi();
   } else {
     enforcePriorityLimits();
@@ -590,10 +600,14 @@ choicesForm.addEventListener("change", () => {
 
 choicesForm.addEventListener("submit", async (event) => {
   event.preventDefault();
-  const isCambridge = isCurrentCourseCambridge();
-  const priorities = isCambridge ? [] : getSelectedPriorities();
+  const isTenthGrade = isTenthGradeProcess();
+  const tenthGrade = isTenthGrade ? getTenthGradeSelection() : null;
+  const isCambridge = !isTenthGrade && isCurrentCourseCambridge();
+  const priorities = isTenthGrade || isCambridge ? [] : getSelectedPriorities();
   const cambridge = isCambridge ? getCambridgeSelection() : null;
-  const validation = isCambridge
+  const validation = isTenthGrade
+    ? validateTenthGradeSelection(tenthGrade)
+    : isCambridge
     ? validateCambridgeSelection(cambridge, currentStudent.curso)
     : validatePriorities(priorities, currentStudent.curso);
 
@@ -610,8 +624,9 @@ choicesForm.addEventListener("submit", async (event) => {
     processo_id: getProcessId(currentStudent),
     ano: getProcessYear(currentStudent),
     autenticado_com: getSignedInEmail(),
-    prioridades: priorities,
+    prioridades: isTenthGrade ? [] : priorities,
     cambridge,
+    escolha_10: tenthGrade,
     submetido_em: currentChoice?.submetido_em || new Date().toISOString()
   };
 
@@ -689,7 +704,7 @@ downloadCsvButton.addEventListener("click", async () => {
   const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
   const link = document.createElement("a");
   link.href = URL.createObjectURL(blob);
-  link.download = "escolhas-12ano.csv";
+  link.download = CURRENT_PROCESS.downloadName;
   link.click();
   URL.revokeObjectURL(link.href);
 });
@@ -727,7 +742,7 @@ async function loadSignedInStudent(options = {}) {
       return;
     }
 
-    if (!getCourseRules(student.curso)) {
+    if (!isTenthGradeProcess() && !getCourseRules(student.curso)) {
       showLoginError("O teu curso não está configurado nesta aplicação. Contacta a administração.");
       return;
     }
@@ -758,6 +773,11 @@ async function loadSignedInStudent(options = {}) {
 }
 
 function renderStudentArea(student, existingChoice = null) {
+  if (isTenthGradeProcess()) {
+    renderTenthGradeStudentArea(student, existingChoice);
+    return;
+  }
+
   const rules = getCourseRules(student.curso);
 
   document.querySelector("#student-name").textContent = student.nome;
@@ -777,6 +797,7 @@ function renderStudentArea(student, existingChoice = null) {
   });
   standardChoices.classList.toggle("hidden", Boolean(rules.cambridge));
   cambridgeChoices.classList.toggle("hidden", !rules.cambridge);
+  tenthChoices.classList.add("hidden");
 
   if (rules.pendingConfiguration) {
     validationMessage.textContent = rules.ruleText;
@@ -824,6 +845,60 @@ function renderStudentArea(student, existingChoice = null) {
   updateValidation();
 }
 
+function renderTenthGradeStudentArea(student, existingChoice = null) {
+  document.querySelector("#student-name").textContent = student.nome;
+  document.querySelector("#student-class").textContent = student.turma;
+  document.querySelector("#student-course").textContent = existingChoice?.escolha_10?.curso_label || "A escolher para o 10.º ano";
+  document.querySelector("#course-rules").textContent = "Escolhe o curso do 10.º ano. A aplicação mostra as disciplinas associadas e valida a opção quando existir.";
+
+  prioritiesList.innerHTML = "";
+  cambridgeExtraList.innerHTML = "";
+  tenthCourseOptions.innerHTML = "";
+  tenthOptionList.innerHTML = "";
+
+  standardChoices.classList.add("hidden");
+  cambridgeChoices.classList.add("hidden");
+  tenthChoices.classList.remove("hidden");
+
+  Object.entries(tenthGradeCourses).forEach(([courseKey, rules]) => {
+    const label = document.createElement("label");
+    label.className = `subject-option ${rules.cambridge ? "optional-subject" : "required-subject"}`;
+
+    const input = document.createElement("input");
+    input.type = "radio";
+    input.name = "tenth-course";
+    input.value = courseKey;
+
+    const text = document.createElement("span");
+    text.textContent = rules.label;
+
+    const note = document.createElement("small");
+    note.textContent = rules.cambridge ? "Percurso Cambridge" : "Percurso nacional";
+    text.appendChild(note);
+
+    label.append(input, text);
+    tenthCourseOptions.appendChild(label);
+  });
+
+  if (existingChoice?.escolha_10) {
+    prefillTenthGradeChoice(existingChoice.escolha_10);
+    confirmation.classList.remove("hidden");
+    confirmation.textContent = existingChoice.estado === "bloqueada"
+      ? "A tua submissão está bloqueada pela administração e já não pode ser alterada."
+      : "Já existe uma submissão guardada. Podes rever e editar enquanto não estiver bloqueada.";
+  } else {
+    confirmation.classList.add("hidden");
+    confirmation.textContent = "";
+  }
+
+  updateChoiceStatus(existingChoice);
+  setChoicesLocked(existingChoice?.estado === "bloqueada");
+  studentArea.classList.remove("hidden");
+  submitChoiceButton.disabled = true;
+  updateTenthGradeUi();
+  updateValidation();
+}
+
 function prefillChoice(choice) {
   choice.prioridades.forEach((item) => {
     item.subjects.forEach((subject) => {
@@ -868,6 +943,9 @@ function setChoicesLocked(isLocked) {
     document.querySelectorAll('input[name="maths-october"], input[name="cambridge-main"], input[name="cambridge-extra"]').forEach((input) => {
       input.disabled = false;
     });
+    document.querySelectorAll('input[name="tenth-course"], input[name="tenth-option"]').forEach((input) => {
+      input.disabled = false;
+    });
     enforcePriorityLimits();
     return;
   }
@@ -878,8 +956,148 @@ function setChoicesLocked(isLocked) {
   document.querySelectorAll('input[name="maths-october"], input[name="cambridge-main"], input[name="cambridge-extra"]').forEach((input) => {
     input.disabled = true;
   });
+  document.querySelectorAll('input[name="tenth-course"], input[name="tenth-option"]').forEach((input) => {
+    input.disabled = true;
+  });
 
   submitChoiceButton.disabled = true;
+}
+
+function isTenthGradeProcess() {
+  return CURRENT_PROCESS.mode === "10-curso";
+}
+
+function getTenthGradeSelection() {
+  const selectedCourseKey = document.querySelector('input[name="tenth-course"]:checked')?.value || "";
+  const rules = tenthGradeCourses[selectedCourseKey] || null;
+  const selectedOption = document.querySelector('input[name="tenth-option"]:checked')?.value || "";
+
+  if (!rules) {
+    return null;
+  }
+
+  const tipoCambridge = rules.cambridge
+    ? "candidatura_ou_continuidade"
+    : "nacional";
+
+  return {
+    curso_key: selectedCourseKey,
+    curso_label: rules.label,
+    cambridge: rules.cambridge,
+    tipo_cambridge: tipoCambridge,
+    estado_cambridge: rules.cambridge ? "entrevista" : "nao_aplicavel",
+    disciplinas_automaticas: [...rules.automaticSubjects],
+    disciplina_opcao: selectedOption || null,
+    disciplinas: [...rules.automaticSubjects, selectedOption].filter(Boolean)
+  };
+}
+
+function updateTenthGradeUi() {
+  if (!isTenthGradeProcess()) {
+    return;
+  }
+
+  const selection = getTenthGradeSelection();
+  tenthAutomaticSubjects.classList.add("hidden");
+  tenthOptionSubjects.classList.add("hidden");
+  tenthCambridgeNotice.classList.add("hidden");
+  tenthOptionList.innerHTML = "";
+
+  if (!selection) {
+    return;
+  }
+
+  const rules = tenthGradeCourses[selection.curso_key];
+  tenthAutomaticSubjects.innerHTML = `
+    <h3>Disciplinas associadas</h3>
+    <p>${escapeHtml(rules.ruleText)}</p>
+    <ul>${rules.automaticSubjects.map((subject) => `<li>${escapeHtml(subject)}</li>`).join("")}</ul>
+  `;
+  tenthAutomaticSubjects.classList.remove("hidden");
+  tenthCambridgeNotice.classList.toggle("hidden", !rules.cambridge);
+
+  if (rules.optionSubjects.length === 0) {
+    return;
+  }
+
+  rules.optionSubjects.forEach((subject) => {
+    const label = document.createElement("label");
+    label.className = "subject-option optional-subject";
+
+    const input = document.createElement("input");
+    input.type = "radio";
+    input.name = "tenth-option";
+    input.value = subject;
+    input.checked = subject === selection.disciplina_opcao;
+
+    const text = document.createElement("span");
+    text.textContent = subject;
+
+    const note = document.createElement("small");
+    note.textContent = "disciplina de opção";
+    text.appendChild(note);
+
+    label.append(input, text);
+    tenthOptionList.appendChild(label);
+  });
+  tenthOptionSubjects.classList.remove("hidden");
+}
+
+function validateTenthGradeSelection(selection) {
+  if (!selection) {
+    return {
+      valid: false,
+      message: "Escolha inválida: seleciona o curso que pretendes frequentar no 10.º ano."
+    };
+  }
+
+  const rules = tenthGradeCourses[selection.curso_key];
+
+  if (!rules) {
+    return {
+      valid: false,
+      message: "Escolha inválida: o curso selecionado não está configurado."
+    };
+  }
+
+  if (rules.optionSubjects.length > 0 && !selection.disciplina_opcao) {
+    return {
+      valid: false,
+      message: "Escolha inválida: seleciona Biologia e Geologia ou Geometria Descritiva A."
+    };
+  }
+
+  if (selection.disciplina_opcao && !rules.optionSubjects.includes(selection.disciplina_opcao)) {
+    return {
+      valid: false,
+      message: "Escolha inválida: a disciplina de opção selecionada não pertence ao curso escolhido."
+    };
+  }
+
+  return {
+    valid: true,
+    message: rules.cambridge
+      ? "Escolha válida: curso e disciplinas registados. O percurso Cambridge fica sujeito a validação pelo Colégio."
+      : "Escolha válida: curso e disciplinas registados."
+  };
+}
+
+function prefillTenthGradeChoice(choice) {
+  const courseInput = document.querySelector(`input[name="tenth-course"][value="${escapeSelectorValue(choice.curso_key)}"]`);
+
+  if (courseInput) {
+    courseInput.checked = true;
+  }
+
+  updateTenthGradeUi();
+
+  if (choice.disciplina_opcao) {
+    const optionInput = document.querySelector(`input[name="tenth-option"][value="${escapeSelectorValue(choice.disciplina_opcao)}"]`);
+
+    if (optionInput) {
+      optionInput.checked = true;
+    }
+  }
 }
 
 async function showHome() {
@@ -996,7 +1214,17 @@ function renderSummaryTable(choice) {
 
   const table = document.createElement("table");
   table.className = "results-table";
-  table.innerHTML = choice.cambridge
+  table.innerHTML = choice.escolha_10
+    ? `
+      <thead>
+        <tr>
+          <th>Campo</th>
+          <th>Valor</th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+    `
+    : choice.cambridge
     ? `
       <thead>
         <tr>
@@ -1019,7 +1247,21 @@ function renderSummaryTable(choice) {
 
   const tbody = table.querySelector("tbody");
 
-  if (choice.cambridge) {
+  if (choice.escolha_10) {
+    const rows = [
+      ["Curso escolhido", choice.escolha_10.curso_label],
+      ["Percurso Cambridge", choice.escolha_10.cambridge ? "Sim" : "Não"],
+      ["Estado Cambridge", formatCambridgeStatus(choice.escolha_10.estado_cambridge)],
+      ["Disciplinas automáticas", (choice.escolha_10.disciplinas_automaticas || []).join(" + ") || "-"],
+      ["Disciplina de opção", choice.escolha_10.disciplina_opcao || "-"]
+    ];
+
+    rows.forEach(([label, value]) => {
+      const row = document.createElement("tr");
+      row.innerHTML = `<td>${escapeHtml(label)}</td><td>${escapeHtml(value)}</td>`;
+      tbody.appendChild(row);
+    });
+  } else if (choice.cambridge) {
     const rows = [
       ["Exame de Maths em outubro", choice.cambridge.faz_maths_outubro ? "Sim" : "Não"],
       ["Psychology", choice.cambridge.psychology ? "Sim" : "Não"],
@@ -1357,7 +1599,9 @@ function updateValidation() {
     return;
   }
 
-  const validation = isCurrentCourseCambridge()
+  const validation = isTenthGradeProcess()
+    ? validateTenthGradeSelection(getTenthGradeSelection())
+    : isCurrentCourseCambridge()
     ? validateCambridgeSelection(getCambridgeSelection(), currentStudent.curso)
     : validatePriorities(getSelectedPriorities(), currentStudent.curso);
   validationMessage.textContent = validation.message;
@@ -1440,6 +1684,20 @@ function getCourseRules(course) {
 
 function getCourseLabel(course) {
   return getCourseRules(course)?.label || course || "Sem curso";
+}
+
+function getChoiceCourseLabel(choice) {
+  return choice?.escolha_10?.curso_label || getCourseLabel(choice?.curso);
+}
+
+function formatCambridgeStatus(status) {
+  const labels = {
+    entrevista: "Sujeito a entrevista/verificação",
+    aplicavel: "Aplicável",
+    nao_aplicavel: "Não aplicável"
+  };
+
+  return labels[status] || status || "Não aplicável";
 }
 
 function findOverusedRequiredSubject(priorities, courseKey) {
@@ -1590,8 +1848,9 @@ function mapChoiceToDatabase(choice, existingChoice = null) {
   const prioritySubjects = getPrioritySubjectsForExport(choice);
   const now = new Date().toISOString();
   const cambridge = choice.cambridge || {};
+  const tenthGrade = choice.escolha_10 || null;
 
-  return {
+  const payload = {
     aluno_id: String(choice.aluno_id),
     nome: choice.nome,
     turma: choice.turma,
@@ -1613,6 +1872,18 @@ function mapChoiceToDatabase(choice, existingChoice = null) {
     atualizado_em: existingChoice ? now : null,
     estado: existingChoice?.estado || "submetida"
   };
+
+  if (tenthGrade) {
+    payload.curso_10 = tenthGrade.curso_label;
+    payload.escolha_10_curso_key = tenthGrade.curso_key;
+    payload.cambridge_10 = Boolean(tenthGrade.cambridge);
+    payload.tipo_cambridge = tenthGrade.tipo_cambridge || null;
+    payload.estado_cambridge = tenthGrade.estado_cambridge || null;
+    payload.disciplinas_automaticas_10 = (tenthGrade.disciplinas_automaticas || []).join(" | ");
+    payload.disciplina_opcao_10 = tenthGrade.disciplina_opcao || null;
+  }
+
+  return payload;
 }
 
 function mapChoiceFromDatabase(row) {
@@ -1621,6 +1892,7 @@ function mapChoiceFromDatabase(row) {
     row.cambridge_psychology ||
     row.cambridge_economics ||
     row.cambridge_disciplina_extra;
+  const hasTenthGradeData = Boolean(row.escolha_10_curso_key || row.curso_10 || row.disciplina_opcao_10);
 
   return {
     aluno_id: row.aluno_id,
@@ -1650,6 +1922,21 @@ function mapChoiceFromDatabase(row) {
           psychology: Boolean(row.cambridge_psychology),
           economics: Boolean(row.cambridge_economics),
           disciplina_extra: row.cambridge_disciplina_extra || null
+        }
+      : null,
+    escolha_10: hasTenthGradeData
+      ? {
+          curso_key: row.escolha_10_curso_key || "",
+          curso_label: row.curso_10 || tenthGradeCourses[row.escolha_10_curso_key]?.label || "",
+          cambridge: Boolean(row.cambridge_10),
+          tipo_cambridge: row.tipo_cambridge || null,
+          estado_cambridge: row.estado_cambridge || null,
+          disciplinas_automaticas: String(row.disciplinas_automaticas_10 || "").split("|").map((subject) => subject.trim()).filter(Boolean),
+          disciplina_opcao: row.disciplina_opcao_10 || null,
+          disciplinas: [
+            ...String(row.disciplinas_automaticas_10 || "").split("|").map((subject) => subject.trim()).filter(Boolean),
+            row.disciplina_opcao_10
+          ].filter(Boolean)
         }
       : null,
     submetido_em: row.submetido_em,
@@ -2097,7 +2384,7 @@ function studentMatchesAdminFilters(student, choice, filters) {
   const submitted = Boolean(choice);
   const notRenewing = isStudentNotRenewing(student.aluno_id);
 
-  if (filters.course && getCourseLabel(student.curso) !== filters.course) {
+  if (filters.course && (choice ? getChoiceCourseLabel(choice) : getCourseLabel(student.curso)) !== filters.course) {
     return false;
   }
 
@@ -2148,15 +2435,21 @@ function isStudentNotRenewing(alunoId) {
 function updateAdminFilterOptions(studentsList) {
   const currentCourse = filterCourse.value;
   const currentClass = filterClass.value;
-  fillSelectOptions(filterCourse, uniqueSorted(studentsList.map((student) => getCourseLabel(student.curso))));
+  const studentCourses = studentsList.map((student) => getCourseLabel(student.curso));
+  const choiceCourses = adminChoicesCache.map((choice) => getChoiceCourseLabel(choice));
+  fillSelectOptions(filterCourse, uniqueSorted([...studentCourses, ...choiceCourses]));
   filterCourse.value = Array.from(filterCourse.options).some((option) => option.value === currentCourse) ? currentCourse : "";
   updateClassFilterOptionsForSelectedCourse(currentClass);
 }
 
 function updateClassFilterOptionsForSelectedCourse(preferredClass = filterClass.value) {
   const selectedCourse = filterCourse.value;
+  const choicesByAluno = new Map(adminChoicesCache.map((choice) => [String(choice.aluno_id), choice]));
   const availableStudents = selectedCourse
-    ? adminStudentsCache.filter((student) => getCourseLabel(student.curso) === selectedCourse)
+    ? adminStudentsCache.filter((student) => {
+        const choice = choicesByAluno.get(String(student.aluno_id));
+        return (choice ? getChoiceCourseLabel(choice) : getCourseLabel(student.curso)) === selectedCourse;
+      })
     : adminStudentsCache;
   fillSelectOptions(filterClass, uniqueSorted(availableStudents.map((student) => student.turma)));
   const currentClass = preferredClass;
@@ -2231,7 +2524,7 @@ function buildCourseStats(studentsList, choices) {
       return;
     }
 
-    const label = getCourseLabel(choice.curso);
+    const label = getChoiceCourseLabel(choice);
     submittedByCourse.set(label, (submittedByCourse.get(label) || 0) + 1);
   });
 
@@ -2274,7 +2567,7 @@ function buildSubjectStatsByCourse(choices) {
   const counts = new Map();
 
   choices.forEach((choice) => {
-    const course = getCourseLabel(choice.curso);
+    const course = getChoiceCourseLabel(choice);
     const uniqueSubjects = new Set(getPrioritySubjectsForExport(choice).filter(Boolean));
 
     uniqueSubjects.forEach((subject) => {
@@ -2382,7 +2675,7 @@ function buildPairStatsByCourse(choices) {
   const counts = new Map();
 
   choices.forEach((choice) => {
-    const course = getCourseLabel(choice.curso);
+    const course = getChoiceCourseLabel(choice);
 
     getNormalPriorityItems(choice).forEach((item) => {
       const pair = normalizePairLabel(item.subjects);
@@ -2710,7 +3003,7 @@ async function updateAdminResults(preloadedStudents = null, preloadedChoices = n
       }
 
       if (key === "course") {
-        return getCourseLabel(row.choice?.curso || row.student.curso);
+        return row.choice ? getChoiceCourseLabel(row.choice) : getCourseLabel(row.student.curso);
       }
 
       if (key === "submission") {
@@ -2743,14 +3036,14 @@ async function updateAdminResults(preloadedStudents = null, preloadedChoices = n
       const submitted = Boolean(choice);
       const notRenewing = isStudentNotRenewing(student.aluno_id);
       const isLocked = choice?.estado === "bloqueada";
-      const rowCourse = choice?.curso || student.curso;
+      const rowCourse = choice ? getChoiceCourseLabel(choice) : getCourseLabel(student.curso);
       const situationLabel = notRenewing ? "Não renova" : submitted ? "Preencheu" : "Por preencher";
       const situationClass = notRenewing ? "not-renewing" : submitted ? "editable" : "pending";
       row.innerHTML = `
         <td></td>
         <td>${escapeHtml(student.nome)}<br><small>${escapeHtml(student.aluno_id)}</small></td>
         <td>${escapeHtml(student.turma)}</td>
-        <td>${escapeHtml(getCourseLabel(rowCourse))}</td>
+        <td>${escapeHtml(rowCourse)}</td>
         <td><span class="status-pill ${situationClass}">${situationLabel}</span></td>
         <td>${submitted && !notRenewing ? `<span class="status-pill ${isLocked ? "locked" : "editable"}">${isLocked ? "Bloqueada" : "Editável"}</span>` : "-"}</td>
         <td></td>
@@ -2955,6 +3248,12 @@ function buildChoicesCsv(choices) {
       "cambridge_psychology",
       "cambridge_economics",
       "cambridge_disciplina_extra",
+      "curso_10",
+      "cambridge_10",
+      "tipo_cambridge",
+      "estado_cambridge",
+      "disciplinas_automaticas_10",
+      "disciplina_opcao_10",
       "submetido_em",
       "estado"
     ],
@@ -2974,6 +3273,12 @@ function buildChoicesCsv(choices) {
         choice.cambridge?.psychology ?? "",
         choice.cambridge?.economics ?? "",
         choice.cambridge?.disciplina_extra || "",
+        choice.escolha_10?.curso_label || "",
+        choice.escolha_10?.cambridge ?? "",
+        choice.escolha_10?.tipo_cambridge || "",
+        choice.escolha_10?.estado_cambridge || "",
+        (choice.escolha_10?.disciplinas_automaticas || []).join(" | "),
+        choice.escolha_10?.disciplina_opcao || "",
         choice.submetido_em,
         choice.estado || "submetida"
       ];
@@ -2984,6 +3289,10 @@ function buildChoicesCsv(choices) {
 }
 
 function getPrioritySubjectsForExport(choice) {
+  if (choice.escolha_10) {
+    return getTenthGradeSubjectsForExport(choice.escolha_10);
+  }
+
   if (choice.cambridge) {
     return getCambridgeSubjectsForExport(choice.cambridge);
   }
@@ -2999,6 +3308,15 @@ function getPrioritySubjectsForExport(choice) {
   }
 
   return ["", "", "", "", "", ""];
+}
+
+function getTenthGradeSubjectsForExport(tenthGrade) {
+  const subjects = [
+    ...(tenthGrade.disciplinas_automaticas || []),
+    tenthGrade.disciplina_opcao
+  ].filter(Boolean);
+
+  return [...subjects, "", "", "", "", "", ""].slice(0, 6);
 }
 
 function getCambridgeSubjectsForExport(cambridge) {
@@ -3038,4 +3356,13 @@ function escapeHtml(value) {
     .replaceAll("'", "&#039;");
 }
 
+function initProcessUi() {
+  document.title = CURRENT_PROCESS.title;
+
+  if (pageTitle) {
+    pageTitle.textContent = CURRENT_PROCESS.title;
+  }
+}
+
+initProcessUi();
 authInitPromise = initAuth();
