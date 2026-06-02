@@ -331,6 +331,12 @@ select {
   color: #765c12;
 }
 
+.status-pill.not-renewing {
+  background: #edf1f4;
+  border-color: #b8c4cc;
+  color: #44515b;
+}
+
 dt {
   color: var(--muted);
   font-size: 0.78rem;
@@ -712,6 +718,10 @@ dd {
 
 .results-table td:last-child {
   min-width: 130px;
+}
+
+.results-table td:last-child button + button {
+  margin-left: 0.45rem;
 }
 
 .results-table th {

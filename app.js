@@ -172,6 +172,7 @@ let supabaseInitPromise = null;
 let isAdminUser = false;
 let adminStudentsCache = [];
 let adminChoicesCache = [];
+let adminStudentStatusesCache = new Map();
 let lastStudentView = "home";
 
 const loginRequest = {
@@ -364,6 +365,72 @@ const choiceRepository = {
     }
 
     localStorage.removeItem(STORAGE_KEY);
+  }
+};
+
+const studentStatusRepository = {
+  async getAll() {
+    const client = await ensureSupabaseReady();
+
+    if (!client) {
+      return new Map(JSON.parse(localStorage.getItem("escolhas12ano.alunos_estado") || "[]"));
+    }
+
+    const { data, error } = await client
+      .from("alunos_estado")
+      .select("aluno_id,estado,observacao,atualizado_em");
+
+    if (error) {
+      console.warn("A tabela alunos_estado ainda não está disponível.", error.message);
+      return new Map();
+    }
+
+    return new Map((data || []).map((row) => [String(row.aluno_id), row.estado || "ativo"]));
+  },
+
+  async getByAlunoId(alunoId) {
+    const client = await ensureSupabaseReady();
+
+    if (!client) {
+      return (await this.getAll()).get(String(alunoId)) || "ativo";
+    }
+
+    const { data, error } = await client
+      .from("alunos_estado")
+      .select("estado")
+      .eq("aluno_id", String(alunoId))
+      .maybeSingle();
+
+    if (error) {
+      console.warn("Não foi possível consultar alunos_estado.", error.message);
+      return "ativo";
+    }
+
+    return data?.estado || "ativo";
+  },
+
+  async updateStatus(alunoId, estado) {
+    const client = await ensureSupabaseReady();
+    const payload = {
+      aluno_id: String(alunoId),
+      estado,
+      atualizado_em: new Date().toISOString()
+    };
+
+    if (!client) {
+      const statuses = await this.getAll();
+      statuses.set(String(alunoId), estado);
+      localStorage.setItem("escolhas12ano.alunos_estado", JSON.stringify(Array.from(statuses.entries())));
+      return;
+    }
+
+    const { error } = await client
+      .from("alunos_estado")
+      .upsert(payload, { onConflict: "aluno_id" });
+
+    if (error) {
+      throw new Error("Não foi possível atualizar o estado administrativo do aluno.");
+    }
   }
 };
 
@@ -594,6 +661,13 @@ async function loadSignedInStudent(options = {}) {
     }
 
     currentStudent = student;
+    const studentProcessStatus = await studentStatusRepository.getByAlunoId(student.aluno_id);
+
+    if (studentProcessStatus === "nao_renova") {
+      showLoginError("Não tens de preencher escolhas de opcionais porque a tua matrícula não está ativa para este processo. Se isto não estiver correto, contacta a secretaria.");
+      return;
+    }
+
     currentChoice = await choiceRepository.getByAlunoId(student.aluno_id);
     loginMessage.textContent = "";
     document.querySelector("#entrada").classList.add("hidden");
@@ -1781,12 +1855,14 @@ async function updateAdminDashboard() {
   adminDashboard.textContent = "A carregar indicadores...";
 
   try {
-    const [studentsList, choices] = await Promise.all([
+    const [studentsList, choices, studentStatuses] = await Promise.all([
       studentRepository.getAll(),
-      choiceRepository.getAll()
+      choiceRepository.getAll(),
+      studentStatusRepository.getAll()
     ]);
     adminStudentsCache = studentsList;
     adminChoicesCache = choices;
+    adminStudentStatusesCache = studentStatuses;
     updateAdminFilterOptions(studentsList);
     renderFilteredAdminDashboard();
   } catch (error) {
@@ -1797,7 +1873,8 @@ async function updateAdminDashboard() {
 
 function renderAdminDashboard(studentsList, choices) {
   const submittedIds = new Set(choices.map((choice) => String(choice.aluno_id)));
-  const pendingStudents = studentsList.filter((student) => !submittedIds.has(String(student.aluno_id)));
+  const notRenewingStudents = studentsList.filter((student) => isStudentNotRenewing(student.aluno_id));
+  const pendingStudents = studentsList.filter((student) => !submittedIds.has(String(student.aluno_id)) && !isStudentNotRenewing(student.aluno_id));
   const lockedCount = choices.filter((choice) => choice.estado === "bloqueada").length;
   const editableCount = choices.length - lockedCount;
 
@@ -1809,6 +1886,7 @@ function renderAdminDashboard(studentsList, choices) {
       ["Alunos", studentsList.length],
       ["Submissões", choices.length],
       ["Por preencher", pendingStudents.length],
+      ["Não renovam", notRenewingStudents.length],
       ["Editáveis", editableCount],
       ["Bloqueadas", lockedCount]
     ])
@@ -1823,7 +1901,8 @@ function renderAdminStats(studentsList, choices) {
   }
 
   const submittedIds = new Set(choices.map((choice) => String(choice.aluno_id)));
-  const pendingStudents = studentsList.filter((student) => !submittedIds.has(String(student.aluno_id)));
+  const pendingStudents = studentsList.filter((student) => !submittedIds.has(String(student.aluno_id)) && !isStudentNotRenewing(student.aluno_id));
+  const notRenewingStudents = studentsList.filter((student) => isStudentNotRenewing(student.aluno_id));
   const byCourse = buildCourseStats(studentsList, choices);
   const subjectStats = buildSubjectStats(choices);
   const subjectByCourse = buildSubjectStatsByCourse(choices);
@@ -1834,6 +1913,7 @@ function renderAdminStats(studentsList, choices) {
   const tabs = [
     ["submissoes", "Submissões por curso", createCourseStatsTable(byCourse)],
     ["pendentes", "Alunos por preencher", createPendingStudentsTable(pendingStudents)],
+    ["nao-renovam", "Não renovam", createNotRenewingStudentsTable(notRenewingStudents)],
     ["disciplinas", "Disciplinas mais escolhidas", createSubjectStatsTable(subjectStats)],
     ["disciplinas-curso", "Disciplinas mais escolhidas por curso", createSubjectStatsByCourseTable(subjectByCourse)],
     ["prioridades", "Prioridades", createPrioritySubjectStatsTable(priorityStats)],
@@ -1912,7 +1992,7 @@ function getFilteredAdminData() {
 
   const students = adminStudentsCache.filter((student) => studentMatchesAdminFilters(student, choicesByAluno.get(String(student.aluno_id)), filters));
   const visibleStudentIds = new Set(students.map((student) => String(student.aluno_id)));
-  const choices = adminChoicesCache.filter((choice) => visibleStudentIds.has(String(choice.aluno_id)));
+  const choices = adminChoicesCache.filter((choice) => visibleStudentIds.has(String(choice.aluno_id)) && !isStudentNotRenewing(choice.aluno_id));
 
   return { students, choices };
 }
@@ -1929,6 +2009,7 @@ function getAdminFilters() {
 
 function studentMatchesAdminFilters(student, choice, filters) {
   const submitted = Boolean(choice);
+  const notRenewing = isStudentNotRenewing(student.aluno_id);
 
   if (filters.course && getCourseLabel(student.curso) !== filters.course) {
     return false;
@@ -1938,15 +2019,19 @@ function studentMatchesAdminFilters(student, choice, filters) {
     return false;
   }
 
-  if (filters.status && (!choice || choice.estado !== filters.status)) {
+  if (filters.status && (!choice || notRenewing || choice.estado !== filters.status)) {
     return false;
   }
 
-  if (filters.submission === "submitted" && !submitted) {
+  if (filters.submission === "submitted" && (!submitted || notRenewing)) {
     return false;
   }
 
-  if (filters.submission === "pending" && submitted) {
+  if (filters.submission === "pending" && (submitted || notRenewing)) {
+    return false;
+  }
+
+  if (filters.submission === "not-renewing" && !notRenewing) {
     return false;
   }
 
@@ -1968,6 +2053,10 @@ function studentMatchesAdminFilters(student, choice, filters) {
   }
 
   return true;
+}
+
+function isStudentNotRenewing(alunoId) {
+  return adminStudentStatusesCache.get(String(alunoId)) === "nao_renova";
 }
 
 function updateAdminFilterOptions(studentsList) {
@@ -2040,13 +2129,22 @@ function createAdminSection(title, content) {
 function buildCourseStats(studentsList, choices) {
   const submittedByCourse = new Map();
   const totalsByCourse = new Map();
+  const notRenewingByCourse = new Map();
 
   studentsList.forEach((student) => {
     const label = getCourseLabel(student.curso);
     totalsByCourse.set(label, (totalsByCourse.get(label) || 0) + 1);
+
+    if (isStudentNotRenewing(student.aluno_id)) {
+      notRenewingByCourse.set(label, (notRenewingByCourse.get(label) || 0) + 1);
+    }
   });
 
   choices.forEach((choice) => {
+    if (isStudentNotRenewing(choice.aluno_id)) {
+      return;
+    }
+
     const label = getCourseLabel(choice.curso);
     submittedByCourse.set(label, (submittedByCourse.get(label) || 0) + 1);
   });
@@ -2054,11 +2152,13 @@ function buildCourseStats(studentsList, choices) {
   return Array.from(totalsByCourse.entries())
     .map(([course, total]) => {
       const submitted = submittedByCourse.get(course) || 0;
+      const notRenewing = notRenewingByCourse.get(course) || 0;
       return {
         course,
         total,
         submitted,
-        pending: total - submitted
+        pending: total - submitted - notRenewing,
+        notRenewing
       };
     })
     .sort((first, second) => first.course.localeCompare(second.course, "pt-PT"));
@@ -2222,14 +2322,27 @@ function createCourseStatsTable(rows) {
   }
 
   return createTable(
-    ["Curso", "Alunos", "Preencheram", "Por preencher"],
-    rows.map((row) => [row.course, row.total, row.submitted, row.pending])
+    ["Curso", "Alunos", "Preencheram", "Por preencher", "Não renovam"],
+    rows.map((row) => [row.course, row.total, row.submitted, row.pending, row.notRenewing])
   );
 }
 
 function createPendingStudentsTable(studentsList) {
   if (studentsList.length === 0) {
     return createEmptyMessage("Todos os alunos registados já preencheram.");
+  }
+
+  return createTable(
+    ["Aluno", "Turma", "Curso", "Email"],
+    studentsList
+      .sort((first, second) => first.turma.localeCompare(second.turma, "pt-PT") || first.nome.localeCompare(second.nome, "pt-PT"))
+      .map((student) => [student.nome, student.turma, getCourseLabel(student.curso), student.email || "-"])
+  );
+}
+
+function createNotRenewingStudentsTable(studentsList) {
+  if (studentsList.length === 0) {
+    return createEmptyMessage("Ainda não existem alunos marcados como não renovam.");
   }
 
   return createTable(
@@ -2423,7 +2536,7 @@ async function updateAdminResults(preloadedStudents = null, preloadedChoices = n
 
     const selectAllLabel = document.createElement("label");
     selectAllLabel.className = "bulk-select";
-    selectAllLabel.innerHTML = `<input id="bulk-select-results" type="checkbox"> Selecionar submissões visíveis`;
+    selectAllLabel.innerHTML = `<input id="bulk-select-results" type="checkbox"> Selecionar alunos visíveis`;
 
     const lockSelectedButton = document.createElement("button");
     lockSelectedButton.type = "button";
@@ -2435,7 +2548,17 @@ async function updateAdminResults(preloadedStudents = null, preloadedChoices = n
     unlockSelectedButton.className = "secondary";
     unlockSelectedButton.textContent = "Desbloquear selecionados";
 
-    bulkActions.append(selectAllLabel, lockSelectedButton, unlockSelectedButton);
+    const markNotRenewingButton = document.createElement("button");
+    markNotRenewingButton.type = "button";
+    markNotRenewingButton.className = "secondary";
+    markNotRenewingButton.textContent = "Marcar como não renovam";
+
+    const reactivateStudentsButton = document.createElement("button");
+    reactivateStudentsButton.type = "button";
+    reactivateStudentsButton.className = "secondary";
+    reactivateStudentsButton.textContent = "Reativar alunos";
+
+    bulkActions.append(selectAllLabel, lockSelectedButton, unlockSelectedButton, markNotRenewingButton, reactivateStudentsButton);
 
     const table = document.createElement("table");
     table.className = "results-table";
@@ -2500,7 +2623,7 @@ async function updateAdminResults(preloadedStudents = null, preloadedChoices = n
       }
 
       if (key === "submission") {
-        return row.choice ? "Preencheu" : "Por preencher";
+        return isStudentNotRenewing(row.student.aluno_id) ? "Não renova" : row.choice ? "Preencheu" : "Por preencher";
       }
 
       if (key === "status") {
@@ -2527,38 +2650,49 @@ async function updateAdminResults(preloadedStudents = null, preloadedChoices = n
       sortedRows.forEach(({ student, choice }) => {
       const row = document.createElement("tr");
       const submitted = Boolean(choice);
+      const notRenewing = isStudentNotRenewing(student.aluno_id);
       const isLocked = choice?.estado === "bloqueada";
       const rowCourse = choice?.curso || student.curso;
+      const situationLabel = notRenewing ? "Não renova" : submitted ? "Preencheu" : "Por preencher";
+      const situationClass = notRenewing ? "not-renewing" : submitted ? "editable" : "pending";
       row.innerHTML = `
         <td></td>
         <td>${escapeHtml(student.nome)}<br><small>${escapeHtml(student.aluno_id)}</small></td>
         <td>${escapeHtml(student.turma)}</td>
         <td>${escapeHtml(getCourseLabel(rowCourse))}</td>
-        <td><span class="status-pill ${submitted ? "editable" : "pending"}">${submitted ? "Preencheu" : "Por preencher"}</span></td>
-        <td>${submitted ? `<span class="status-pill ${isLocked ? "locked" : "editable"}">${isLocked ? "Bloqueada" : "Editável"}</span>` : "-"}</td>
+        <td><span class="status-pill ${situationClass}">${situationLabel}</span></td>
+        <td>${submitted && !notRenewing ? `<span class="status-pill ${isLocked ? "locked" : "editable"}">${isLocked ? "Bloqueada" : "Editável"}</span>` : "-"}</td>
         <td></td>
       `;
 
       const selectCell = row.querySelector("td:first-child");
       const actionCell = row.querySelector("td:last-child");
 
-      if (!submitted) {
-        actionCell.textContent = "-";
-        tbody.appendChild(row);
-        return;
-      }
-
       const checkbox = document.createElement("input");
       checkbox.type = "checkbox";
       checkbox.className = "admin-result-checkbox";
-      checkbox.value = String(choice.aluno_id);
+      checkbox.value = String(student.aluno_id);
       checkbox.setAttribute("aria-label", `Selecionar ${student.nome}`);
       selectCell.appendChild(checkbox);
+
+      if (notRenewing) {
+        const reactivateButton = document.createElement("button");
+        reactivateButton.type = "button";
+        reactivateButton.className = "secondary";
+        reactivateButton.textContent = "Reativar";
+        reactivateButton.addEventListener("click", async () => {
+          await updateStudentProcessStatus(student.aluno_id, "ativo");
+        });
+        actionCell.appendChild(reactivateButton);
+        tbody.appendChild(row);
+        return;
+      }
 
       const button = document.createElement("button");
       button.type = "button";
       button.className = isLocked ? "secondary" : "secondary danger";
       button.textContent = isLocked ? "Desbloquear" : "Bloquear";
+      button.classList.toggle("hidden", !submitted);
       button.addEventListener("click", async () => {
         button.disabled = true;
 
@@ -2571,7 +2705,19 @@ async function updateAdminResults(preloadedStudents = null, preloadedChoices = n
         }
       });
 
-      actionCell.appendChild(button);
+      const notRenewingButton = document.createElement("button");
+      notRenewingButton.type = "button";
+      notRenewingButton.className = "secondary";
+      notRenewingButton.textContent = "Não renova";
+      notRenewingButton.addEventListener("click", async () => {
+        await updateStudentProcessStatus(student.aluno_id, "nao_renova");
+      });
+
+      if (submitted) {
+        actionCell.appendChild(button);
+      }
+
+      actionCell.appendChild(notRenewingButton);
       tbody.appendChild(row);
     });
     }
@@ -2580,11 +2726,15 @@ async function updateAdminResults(preloadedStudents = null, preloadedChoices = n
 
     const submittedCheckboxes = () => Array.from(table.querySelectorAll(".admin-result-checkbox"));
     const selectedAlunoIds = () => submittedCheckboxes().filter((checkbox) => checkbox.checked).map((checkbox) => checkbox.value);
+    const selectedSubmittedAlunoIds = () => selectedAlunoIds().filter((alunoId) => choicesByAluno.has(String(alunoId)) && !isStudentNotRenewing(alunoId));
     const setBulkButtonsState = () => {
       const hasSelection = selectedAlunoIds().length > 0;
+      const hasSubmittedSelection = selectedSubmittedAlunoIds().length > 0;
       selectAllCheckbox.disabled = submittedCheckboxes().length === 0;
-      lockSelectedButton.disabled = !hasSelection;
-      unlockSelectedButton.disabled = !hasSelection;
+      lockSelectedButton.disabled = !hasSubmittedSelection;
+      unlockSelectedButton.disabled = !hasSubmittedSelection;
+      markNotRenewingButton.disabled = !hasSelection;
+      reactivateStudentsButton.disabled = !hasSelection;
     };
     const selectAllCheckbox = selectAllLabel.querySelector("input");
     selectAllCheckbox.addEventListener("change", () => {
@@ -2603,8 +2753,10 @@ async function updateAdminResults(preloadedStudents = null, preloadedChoices = n
       setBulkButtonsState();
     });
 
-    lockSelectedButton.addEventListener("click", () => updateSelectedChoicesStatus(selectedAlunoIds(), "bloqueada"));
-    unlockSelectedButton.addEventListener("click", () => updateSelectedChoicesStatus(selectedAlunoIds(), "submetida"));
+    lockSelectedButton.addEventListener("click", () => updateSelectedChoicesStatus(selectedSubmittedAlunoIds(), "bloqueada"));
+    unlockSelectedButton.addEventListener("click", () => updateSelectedChoicesStatus(selectedSubmittedAlunoIds(), "submetida"));
+    markNotRenewingButton.addEventListener("click", () => updateSelectedStudentsProcessStatus(selectedAlunoIds(), "nao_renova"));
+    reactivateStudentsButton.addEventListener("click", () => updateSelectedStudentsProcessStatus(selectedAlunoIds(), "ativo"));
     setBulkButtonsState();
 
     adminResults.innerHTML = "";
@@ -2624,6 +2776,28 @@ async function updateSelectedChoicesStatus(alunoIds, estado) {
 
   try {
     await Promise.all(alunoIds.map((alunoId) => choiceRepository.updateStatus(alunoId, estado)));
+    await updateAdminDashboard();
+    await updateCsvOutput();
+  } catch (error) {
+    adminResults.textContent = error.message;
+  } finally {
+    adminResults.removeAttribute("aria-busy");
+  }
+}
+
+async function updateStudentProcessStatus(alunoId, estado) {
+  await updateSelectedStudentsProcessStatus([alunoId], estado);
+}
+
+async function updateSelectedStudentsProcessStatus(alunoIds, estado) {
+  if (alunoIds.length === 0) {
+    return;
+  }
+
+  adminResults.setAttribute("aria-busy", "true");
+
+  try {
+    await Promise.all(alunoIds.map((alunoId) => studentStatusRepository.updateStatus(alunoId, estado)));
     await updateAdminDashboard();
     await updateCsvOutput();
   } catch (error) {
