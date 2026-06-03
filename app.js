@@ -227,6 +227,7 @@ const openAdminToolsButton = document.querySelector("#open-admin-tools");
 const backAdminFromStatsButton = document.querySelector("#back-admin-from-stats");
 const backAdminButton = document.querySelector("#back-admin");
 const adminFiltersForm = document.querySelector("#admin-filters");
+const filterProcess = document.querySelector("#filter-process");
 const filterCourse = document.querySelector("#filter-course");
 const filterClass = document.querySelector("#filter-class");
 const filterStatus = document.querySelector("#filter-status");
@@ -247,6 +248,7 @@ let adminStudentsCache = [];
 let adminChoicesCache = [];
 let adminStudentStatusesCache = new Map();
 let lastStudentView = "home";
+let activeProcessesCache = [];
 
 const loginRequest = {
   scopes: ["openid", "profile", "email", "User.Read"]
@@ -535,26 +537,24 @@ const studentStatusRepository = {
 };
 
 const processRepository = {
-  async getActive() {
+  async getAll() {
     const client = await ensureSupabaseReady();
 
     if (!client) {
-      return null;
+      return [];
     }
 
     const { data, error } = await client
       .from("processos_escolha")
       .select("id,nome,ano,ativo,descricao")
-      .eq("ativo", true)
-      .limit(1)
-      .maybeSingle();
+      .order("ano", { ascending: true });
 
     if (error) {
-      console.warn("Não foi possível carregar o processo ativo:", error.message);
-      return null;
+      console.warn("Não foi possível carregar os processos de escolha:", error.message);
+      return [];
     }
 
-    return data || null;
+    return data || [];
   }
 };
 
@@ -723,6 +723,23 @@ adminFiltersForm.addEventListener("change", () => {
   renderFilteredAdminDashboard();
 });
 
+filterProcess.addEventListener("change", async () => {
+  const selectedProcessId = filterProcess.value || CURRENT_PROCESS_ID;
+
+  if (!processesConfig[selectedProcessId] || selectedProcessId === CURRENT_PROCESS_ID) {
+    return;
+  }
+
+  applyProcessConfig(selectedProcessId);
+  filterCourse.value = "";
+  filterClass.value = "";
+  filterStatus.value = "";
+  filterSubmission.value = "";
+  filterSearch.value = "";
+  await updateCsvOutput();
+  await updateAdminDashboard();
+});
+
 clearFiltersButton.addEventListener("click", () => {
   filterCourse.value = "";
   filterClass.value = "";
@@ -804,7 +821,7 @@ async function loadSignedInStudent(options = {}) {
     const student = await studentRepository.findByEmail(getSignedInEmail());
 
     if (!student) {
-      showLoginError(`Não foi encontrado um aluno associado à tua conta Microsoft 365 (${getSignedInEmail()}). Confirma se este email está registado na tabela alunos para o processo ${CURRENT_PROCESS_ID}.`);
+      showLoginError(`Não foi encontrado um aluno associado à tua conta Microsoft 365 (${getSignedInEmail()}) em nenhum processo ativo. Confirma se este email está registado na tabela alunos e se o respetivo processo está ativo.`);
       return;
     }
 
@@ -813,6 +830,7 @@ async function loadSignedInStudent(options = {}) {
       return;
     }
 
+    applyProcessConfig(getProcessId(student));
     currentStudent = student;
     const studentProcessStatus = await studentStatusRepository.getByAlunoId(student.aluno_id);
 
@@ -2606,6 +2624,37 @@ function fillSelectOptions(select, values) {
   });
 }
 
+function updateProcessFilterOptions() {
+  if (!filterProcess) {
+    return;
+  }
+
+  const currentValue = CURRENT_PROCESS_ID;
+  filterProcess.innerHTML = "";
+
+  activeProcessesCache.forEach((process) => {
+    if (!processesConfig[process.id]) {
+      return;
+    }
+
+    const option = document.createElement("option");
+    option.value = process.id;
+    option.textContent = `${process.nome || processesConfig[process.id].title}${process.ativo ? "" : " (inativo)"}`;
+    filterProcess.appendChild(option);
+  });
+
+  if (filterProcess.options.length === 0) {
+    const option = document.createElement("option");
+    option.value = CURRENT_PROCESS_ID;
+    option.textContent = CURRENT_PROCESS.title;
+    filterProcess.appendChild(option);
+  }
+
+  filterProcess.value = Array.from(filterProcess.options).some((option) => option.value === currentValue)
+    ? currentValue
+    : filterProcess.options[0]?.value || currentValue;
+}
+
 function uniqueSorted(values) {
   return Array.from(new Set(values.filter(Boolean))).sort((first, second) => first.localeCompare(second, "pt-PT"));
 }
@@ -3683,18 +3732,28 @@ function applyProcessConfig(processId) {
   CURRENT_PROCESS = processesConfig[CURRENT_PROCESS_ID] || processesConfig[DEFAULT_PROCESS_ID] || processesConfig["12_opcionais"];
   CURRENT_PROCESS_YEAR = CURRENT_PROCESS.year;
   STORAGE_KEY = CURRENT_PROCESS.storageKey;
+  initProcessUi();
+  updateProcessFilterOptions();
 }
 
 async function initActiveProcess() {
-  const activeProcess = await processRepository.getActive();
+  const processes = await processRepository.getAll();
+  activeProcessesCache = processes.filter((process) => processesConfig[process.id]);
+  activeProcessIds = activeProcessesCache
+    .filter((process) => process.ativo)
+    .map((process) => process.id)
+    .filter((processId) => processesConfig[processId]);
 
-  if (activeProcess?.id && processesConfig[activeProcess.id]) {
-    applyProcessConfig(activeProcess.id);
+  if (activeProcessIds.length > 0) {
+    applyProcessConfig(activeProcessIds[0]);
   } else {
+    activeProcessIds = [DEFAULT_PROCESS_ID];
     applyProcessConfig(DEFAULT_PROCESS_ID);
   }
+}
 
-  initProcessUi();
+function getActiveProcessIds() {
+  return activeProcessIds.length > 0 ? activeProcessIds : [CURRENT_PROCESS_ID];
 }
 
 async function bootstrapApp() {
