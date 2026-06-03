@@ -160,9 +160,9 @@ const tenthGradeCourses = {
   LinguasHumanidades: {
     label: "Línguas e Humanidades",
     cambridge: false,
-    automaticSubjects: ["Geografia A", "MACS"],
+    automaticSubjects: ["Geografia A", "Matemática Aplicada às Ciências Sociais"],
     optionSubjects: [],
-    ruleText: "Ficas inscrito automaticamente em Geografia A e MACS."
+    ruleText: "Ficas inscrito automaticamente em Geografia A e Matemática Aplicada às Ciências Sociais."
   },
   ArtesVisuais: {
     label: "Artes Visuais",
@@ -615,6 +615,15 @@ choicesForm.addEventListener("change", () => {
   updateValidation();
 });
 
+submitChoiceButton.addEventListener("click", () => {
+  if (submitChoiceButton.disabled) {
+    return;
+  }
+
+  validationMessage.textContent = "A preparar a submissão...";
+  validationMessage.className = "validation";
+});
+
 choicesForm.addEventListener("submit", async (event) => {
   event.preventDefault();
   const isTenthGrade = isTenthGradeProcess();
@@ -647,18 +656,29 @@ choicesForm.addEventListener("submit", async (event) => {
     submetido_em: currentChoice?.submetido_em || new Date().toISOString()
   };
 
+  let saveFailed = false;
+
   try {
     submitChoiceButton.disabled = true;
+    submitChoiceButton.textContent = currentChoice ? "A atualizar..." : "A guardar...";
+    validationMessage.textContent = "A guardar a escolha...";
+    validationMessage.className = "validation";
     await choiceRepository.save(choice);
     currentChoice = await choiceRepository.getByAlunoId(currentStudent.aluno_id);
     updateChoiceStatus(currentChoice);
     await updateCsvOutput();
     showSummaryPage(currentChoice);
   } catch (error) {
+    saveFailed = true;
     validationMessage.textContent = error.message;
     validationMessage.className = "validation invalid";
+    submitChoiceButton.textContent = currentChoice ? "Atualizar escolha" : "Guardar escolha";
+    submitChoiceButton.disabled = false;
   } finally {
-    updateValidation();
+    if (!currentChoice && !saveFailed) {
+      submitChoiceButton.textContent = "Guardar escolha";
+      updateValidation();
+    }
   }
 });
 
